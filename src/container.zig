@@ -39,9 +39,10 @@ pub const start_idx: usize = 4;
 /// the case that dominates scattered u64 data, where a serialized bitmap is
 /// mostly one-value containers. Raising it front-loads capacity: a container
 /// that will end up dense reaches its final size in fewer doublings, each of
-/// which is a scootRight over the whole tail of the buffer, at the price of
-/// that much space standing empty in every sparse container. Must be a multiple
-/// of 4 (the 8-byte alignment invariant) and larger than the 4-u16 header.
+/// which moves the container to the end of the buffer and leaves a dead slot
+/// behind, at the price of that much space standing empty in every sparse
+/// container. Must be a multiple of 4 (the 8-byte alignment invariant) and
+/// larger than the 4-u16 header.
 pub const min_size: u16 = 8;
 /// An array container that would grow past this converts to a bitmap instead.
 pub const max_array_size: u16 = 2048;

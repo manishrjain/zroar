@@ -317,6 +317,131 @@ test "keys-node growth interleaved with container growth" {
     }
 }
 
+test "growing a mid-buffer container relocates it to the end" {
+    var bm = try Bitmap.init(testing.allocator);
+    defer bm.deinit();
+
+    // A second key puts its container behind key 0's, so growing key 0's
+    // container can no longer be an append.
+    _ = try bm.set(1 << 16);
+    const behind = bm.keys().getValue(1 << 16).?;
+    try testing.expect(bm.keys().getValue(0).? < behind);
+
+    // Fill key 0's container to capacity; the expansion must move it past
+    // the other container rather than shift that container right.
+    const capacity = container.min_size - container.start_idx;
+    var i: u64 = 0;
+    while (i < capacity) : (i += 1) _ = try bm.set(i);
+
+    try testing.expect(
+        bm.keys().getValue(0).? > bm.keys().getValue(1 << 16).?,
+    );
+    try testing.expect(bm.dead > 0);
+    try checkInvariants(&bm);
+
+    try testing.expectEqual(@as(u64, capacity + 1), bm.getCardinality());
+    i = 0;
+    while (i < capacity) : (i += 1) try testing.expect(bm.contains(i));
+    try testing.expect(bm.contains(1 << 16));
+}
+
+test "a mid-buffer array converts to bitmap by relocating" {
+    var bm = try Bitmap.init(testing.allocator);
+    defer bm.deinit();
+
+    // Stop one value short of the array ceiling, then pin a second container
+    // behind key 0's, so the conversion cannot happen in place.
+    var i: u64 = 0;
+    while (i + 1 < container.max_array_values) : (i += 1) _ = try bm.set(i);
+    try testing.expectEqual(container.Type.array, containerTypeOf(&bm, 0));
+    _ = try bm.set(1 << 16);
+
+    _ = try bm.set(container.max_array_values - 1); // full -> convert
+
+    try testing.expectEqual(container.Type.bitmap, containerTypeOf(&bm, 0));
+    try testing.expect(
+        bm.keys().getValue(0).? > bm.keys().getValue(1 << 16).?,
+    );
+    try checkInvariants(&bm);
+
+    try testing.expectEqual(
+        @as(u64, container.max_array_values + 1),
+        bm.getCardinality(),
+    );
+    i = 0;
+    while (i < container.max_array_values) : (i += 1) {
+        try testing.expect(bm.contains(i));
+    }
+    try testing.expect(bm.contains(1 << 16));
+}
+
+test "relocation keeps dead space under the cleanup bound" {
+    var bm = try Bitmap.init(testing.allocator);
+    defer bm.deinit();
+
+    // Alternate between two keys so each container repeatedly finds itself
+    // mid-buffer when it must grow.
+    var i: u64 = 0;
+    while (i < 3000) : (i += 1) {
+        _ = try bm.set(i);
+        _ = try bm.set((1 << 16) | i);
+        try testing.expect(bm.dead * zroar.max_dead_divisor <= bm.data.len);
+    }
+    try checkInvariants(&bm);
+    try testing.expectEqual(@as(u64, 6000), bm.getCardinality());
+
+    // A buffer serialized with dead slots still in it reopens correctly.
+    const buf = try bm.toBufferCopy(testing.allocator);
+    defer testing.allocator.free(buf);
+    var re = try Bitmap.fromBuffer(testing.allocator, buf);
+    defer re.deinit();
+    try testing.expectEqual(@as(u64, 6000), re.getCardinality());
+    try checkInvariants(&re);
+
+    // cleanup reclaims every dead slot and resets the debt.
+    const before = bm.data.len;
+    bm.cleanup();
+    try testing.expectEqual(@as(usize, 0), bm.dead);
+    try testing.expect(bm.data.len <= before);
+    try testing.expectEqual(@as(u64, 6000), bm.getCardinality());
+    try checkInvariants(&bm);
+    i = 0;
+    while (i < 3000) : (i += 1) {
+        try testing.expect(bm.contains(i));
+        try testing.expect(bm.contains((1 << 16) | i));
+    }
+}
+
+test "container relocation on a borrowed bitmap copies out" {
+    var src = try Bitmap.init(testing.allocator);
+    defer src.deinit();
+    // Key 0's container one value short of full, with a second container
+    // behind it, so the next set under key 0 must relocate.
+    const capacity = container.min_size - container.start_idx;
+    var i: u64 = 0;
+    while (i + 1 < capacity) : (i += 1) _ = try src.set(i);
+    _ = try src.set(1 << 16);
+
+    const buf = try src.toBufferCopy(testing.allocator);
+    defer testing.allocator.free(buf);
+
+    var view = try Bitmap.fromBuffer(testing.allocator, buf);
+    defer view.deinit();
+    try testing.expect(!view.owned);
+
+    _ = try view.set(capacity - 1); // fills key 0's container: relocation
+    try testing.expect(view.owned);
+    try checkInvariants(&view);
+
+    // The copied-out bitmap keeps working after further growth.
+    _ = try view.set(0xFFFF);
+    try testing.expectEqual(@as(u64, capacity + 2), view.getCardinality());
+    i = 0;
+    while (i < capacity) : (i += 1) try testing.expect(view.contains(i));
+    try testing.expect(view.contains(1 << 16));
+    try testing.expect(view.contains(0xFFFF));
+}
+
 test "remove from both container types" {
     var bm = try Bitmap.init(testing.allocator);
     defer bm.deinit();

@@ -45,6 +45,14 @@ const init_num_keys: usize = 2;
 /// test suite can assert the capped step without restating the number.
 pub const max_node_growth: usize = 65532;
 
+/// Growing a container that is not last in the buffer moves it to the end
+/// rather than memmoving everything behind it; the slot it leaves behind is
+/// dead space until `cleanup` runs. Mutating ops trigger that cleanup
+/// themselves once dead slots exceed a quarter of the buffer, which bounds
+/// the waste a build-heavy workload can accumulate. Public only so the test
+/// suite can assert the bound without restating the number.
+pub const max_dead_divisor: usize = 4;
+
 /// The keys node header (node size, number of keys), in u16 units.
 const node_header_size: usize = keys_mod.index_node_start * 4;
 
@@ -64,6 +72,8 @@ pub const Bitmap = struct {
     cap: usize,
     /// False for a buffer handed to us by `fromBuffer`; true once we own it.
     owned: bool,
+    /// Dead u16s abandoned by container relocation; see `max_dead_divisor`.
+    dead: usize = 0,
     allocator: std.mem.Allocator,
 
     /// Creates an empty bitmap. The caller owns it and must call `deinit`.
@@ -131,35 +141,73 @@ pub const Bitmap = struct {
         return self.data[offset..][0..sz];
     }
 
-    /// Grows the in-use region by `by_size` u16s, reallocating if needed.
-    /// The newly exposed region is zeroed; Zig allocators do not zero for us.
-    fn fastExpand(self: *Bitmap, by_size: usize) !void {
+    /// The capacity to allocate for a buffer that must hold `needed` u16s.
+    /// Lifted from std.array_list.growCapacity, including its 1.5x factor and
+    /// its one-cache-line floor.
+    ///
+    /// The point of growing off the length required rather than the length
+    /// already held is that the result always carries slack. Growing off the
+    /// capacity does not: a bitmap container landing in a buffer smaller than
+    /// itself asks for more than the capacity, and `cap + by_size` is then
+    /// exactly the new length, so the very next expansion reallocates again.
+    fn growCapacity(needed: usize) usize {
+        const floor = @max(1, std.atomic.cache_line / @sizeOf(u16));
+        return needed +| (needed / 2 + floor);
+    }
+
+    /// Opens a zeroed hole of `by_size` u16s at `offset`, growing the buffer to
+    /// suit. Container-unaware: the caller fixes up affected offsets via
+    /// `Keys.updateOffsets`. Passing `data.len` scoots nothing and so is a
+    /// plain append, which is how a new container is added.
+    ///
+    /// Modelled on std.array_list.addManyAt, for its two reasons. Growth tries
+    /// `remap` first, which for the C allocator reaches `realloc` and lets a
+    /// large buffer grow by extending its mapping instead of copying it. And
+    /// when that fails, the head and tail are copied straight into their final
+    /// positions in the new allocation, so the tail is copied once rather than
+    /// copied whole and then scooted.
+    fn scootRight(self: *Bitmap, offset: usize, by_size: usize) !void {
         const old_len = self.data.len;
         const to_size = old_len + by_size;
+        assert(offset <= old_len);
 
         if (to_size > self.cap) {
-            const new_cap = self.cap + @max(self.cap, by_size);
-            const out = try self.allocator.alignedAlloc(u16, .@"8", new_cap);
-            @memcpy(out[0..old_len], self.data);
-            // A borrowed buffer belongs to the caller; only free our own.
-            if (self.owned) self.allocator.free(self.data.ptr[0..self.cap]);
-            self.data = out.ptr[0..to_size];
-            self.cap = new_cap;
-            self.owned = true;
+            const new_cap = growCapacity(to_size);
+            // A borrowed buffer belongs to the caller: it may be neither
+            // remapped nor freed, only copied out of.
+            const grown = if (self.owned)
+                self.allocator.remap(self.data.ptr[0..self.cap], new_cap)
+            else
+                null;
+
+            if (grown) |m| {
+                self.data = m.ptr[0..to_size];
+                self.cap = new_cap;
+            } else {
+                const out =
+                    try self.allocator.alignedAlloc(u16, .@"8", new_cap);
+                @memcpy(out[0..offset], self.data[0..offset]);
+                @memcpy(
+                    out[offset + by_size ..][0 .. old_len - offset],
+                    self.data[offset..old_len],
+                );
+                if (self.owned) self.allocator.free(self.data.ptr[0..self.cap]);
+                self.data = out.ptr[0..to_size];
+                self.cap = new_cap;
+                self.owned = true;
+                // The hole is the only part of the new buffer nothing was
+                // copied into, and allocators do not zero for us.
+                @memset(self.data[offset..][0..by_size], 0);
+                return;
+            }
         } else {
             self.data = self.data.ptr[0..to_size];
         }
-        @memset(self.data[old_len..to_size], 0);
-    }
 
-    /// Opens a zeroed hole of `by_size` u16s at `offset`. Container-unaware:
-    /// the caller fixes up affected offsets via `Keys.updateOffsets`.
-    fn scootRight(self: *Bitmap, offset: usize, by_size: usize) !void {
-        const old_len = self.data.len;
-        try self.fastExpand(by_size);
+        // Empty range when this was an append, so the append path pays nothing.
         std.mem.copyBackwards(
             u16,
-            self.data[offset + by_size .. old_len + by_size],
+            self.data[offset + by_size .. to_size],
             self.data[offset..old_len],
         );
         @memset(self.data[offset..][0..by_size], 0);
@@ -170,33 +218,60 @@ pub const Bitmap = struct {
         assert(sz % 4 == 0);
         const offset = self.data.len;
         assert(offset % 4 == 0);
-        try self.fastExpand(sz);
+        try self.scootRight(offset, sz); // offset == data.len: an append
         self.data[offset] = sz;
         return offset;
     }
 
-    /// Doubles the container at `offset`, or converts it to a bitmap container
-    /// once doubling would exceed the array-container ceiling.
-    fn expandContainer(self: *Bitmap, offset: usize) !void {
+    /// Abandons the slot at `offset` after its container moved away: zero
+    /// everything but the size header, leaving a canonical empty array
+    /// container in place for `cleanup` to reclaim. Runs that cleanup once
+    /// dead slots exceed the `max_dead_divisor` bound — after which every
+    /// offset the caller holds may have moved.
+    fn markDead(self: *Bitmap, offset: usize) void {
+        const sz = self.data[offset];
+        @memset(self.data[offset + 1 ..][0 .. sz - 1], 0);
+        self.dead += sz;
+        if (self.dead * max_dead_divisor > self.data.len) self.cleanup();
+    }
+
+    /// Doubles the container that `key` maps to at `offset`, or converts it to
+    /// a bitmap container once doubling would exceed the array ceiling.
+    ///
+    /// A container that is last in the buffer grows by plain append. Any other
+    /// is moved to the end instead of being grown in place: growing in place
+    /// memmoves everything behind the container at every rung of the size
+    /// ladder — quadratic over a build — while the move costs one container
+    /// and a dead slot that `markDead` bounds. Offsets held by the caller are
+    /// invalid afterwards.
+    fn expandContainer(self: *Bitmap, key: u64, offset: usize) !void {
         const sz = self.data[offset];
         // Only array containers ever grow; bitmap containers are already
         // maximal.
         assert(sz >= container.min_size and sz <= container.max_array_size);
-
-        const by_size: u16 = if (sz >= container.max_array_size)
-            container.max_size - sz
+        const new_sz: u16 = if (sz >= container.max_array_size)
+            container.max_size
         else
-            sz;
+            sz * 2;
 
-        try self.scootRight(offset + sz, by_size);
-        self.keys().updateOffsets(offset, by_size, true);
-
-        if (sz < container.max_array_size) {
-            self.data[offset] = sz + by_size;
-        } else {
-            self.data[offset] = container.max_size;
-            container.array.toBitmap(self.getContainer(offset));
+        if (offset + sz == self.data.len) {
+            // No other container's offset is beyond ours, so no key needs
+            // fixing up.
+            try self.scootRight(self.data.len, new_sz - sz);
+            self.data[offset] = new_sz;
+            if (new_sz == container.max_size)
+                container.array.toBitmap(self.getContainer(offset));
+            return;
         }
+
+        const off = try self.newContainer(new_sz);
+        @memcpy(self.data[off..][0..sz], self.data[offset..][0..sz]);
+        self.data[off] = new_sz; // the copy brought the old size header along
+        const inserted = self.keys().set(key, off);
+        assert(!inserted); // the key exists; only its offset moved
+        if (new_sz == container.max_size)
+            container.array.toBitmap(self.getContainer(off));
+        self.markDead(offset);
     }
 
     /// Registers `offset` for `key`, returning the offset to use afterwards:
@@ -245,41 +320,58 @@ pub const Bitmap = struct {
         return container.max_size;
     }
 
-    /// Installs the container `src` at `offset`, growing the container already
-    /// there when `src` no longer fits it — up to the full bitmap size, which
-    /// also retypes it. Port of sroar's copyAt; it lands the results that
-    /// `container.containerOr` had to build in its scratch buffer.
-    fn copyAt(self: *Bitmap, offset: usize, src: []const u16) !void {
+    /// Installs the container `src` for `key` at `offset`, growing the
+    /// container already there when `src` no longer fits it — up to the full
+    /// bitmap size, which also retypes it. Port of sroar's copyAt; it lands
+    /// the results that `container.containerOr` had to build in its scratch
+    /// buffer.
+    ///
+    /// Like `expandContainer`, a mid-buffer container that must grow is not
+    /// grown in place: `src` replaces its contents entirely anyway, so it is
+    /// written to a fresh slot at the end and the old slot abandoned, and the
+    /// tail of the buffer never moves. Offsets held by the caller are invalid
+    /// afterwards.
+    fn copyAt(self: *Bitmap, key: u64, offset: usize, src: []const u16) !void {
         const dst_size = self.data[offset];
         assert(dst_size >= container.min_size);
 
-        if (container.getType(src) == .bitmap) {
-            assert(container.size(src) == container.max_size);
-            const by_size = container.max_size - dst_size;
-            try self.scootRight(offset + dst_size, by_size);
-            self.keys().updateOffsets(offset, by_size, true);
-            @memcpy(self.data[offset..][0..container.max_size], src);
-            return;
-        }
-
         // An array result that already fits keeps the larger allocation: the
         // container's own size header must survive the copy.
-        if (dst_size >= container.size(src)) {
+        if (container.getType(src) == .array and
+            dst_size >= container.size(src))
+        {
             @memcpy(self.data[offset..][0..src.len], src);
             self.data[offset] = dst_size;
             return;
         }
 
-        var target = stepSize(dst_size);
-        while (target < container.size(src)) target = stepSize(target);
-        // containerOr only ever builds array results that an array container
-        // can hold, so the step never runs past the array ceiling.
-        assert(target <= container.max_array_size);
+        const target: u16 = if (container.getType(src) == .bitmap) blk: {
+            assert(container.size(src) == container.max_size);
+            break :blk container.max_size;
+        } else blk: {
+            var t = stepSize(dst_size);
+            while (t < container.size(src)) t = stepSize(t);
+            // containerOr only ever builds array results that an array
+            // container can hold, so the step never runs past the array
+            // ceiling.
+            assert(t <= container.max_array_size);
+            break :blk t;
+        };
 
-        try self.scootRight(offset + dst_size, target - dst_size);
-        self.keys().updateOffsets(offset, target - dst_size, true);
-        @memcpy(self.data[offset..][0..src.len], src);
-        self.data[offset] = target;
+        if (offset + dst_size == self.data.len) {
+            // Last in the buffer: growing is a plain append.
+            try self.scootRight(self.data.len, target - dst_size);
+            @memcpy(self.data[offset..][0..src.len], src);
+            self.data[offset] = target;
+            return;
+        }
+
+        const off = try self.newContainer(target);
+        @memcpy(self.data[off..][0..src.len], src);
+        self.data[off] = target;
+        const inserted = self.keys().set(key, off);
+        assert(!inserted); // the key exists; only its offset moved
+        self.markDead(offset);
     }
 
     /// Makes room for `n` further keys in one step, so that a bulk builder can
@@ -338,7 +430,8 @@ pub const Bitmap = struct {
                 if (!container.array.add(c, lo)) return false;
                 // Restore the free-slot invariant before anyone reads the
                 // container.
-                if (container.array.isFull(c)) try self.expandContainer(offset);
+                if (container.array.isFull(c))
+                    try self.expandContainer(key, offset);
                 return true;
             },
             .bitmap => return container.bitmap.add(c, lo),
@@ -607,7 +700,7 @@ pub const Bitmap = struct {
             if (idx >= ks.numKeys() or ks.key(idx) != key) {
                 // The key is new here, so take a copy of the whole container.
                 const offset = try self.addContainer(key, container.size(src));
-                try self.copyAt(offset, src);
+                try self.copyAt(key, offset, src);
                 continue;
             }
             const offset = ks.val(idx);
@@ -615,7 +708,7 @@ pub const Bitmap = struct {
             if (container.containerOr(dst, src, buf, lazy)) |c| {
                 // The union outgrew the container; install what was built
                 // in buf.
-                try self.copyAt(offset, c);
+                try self.copyAt(key, offset, c);
             }
         }
     }
@@ -1026,7 +1119,8 @@ pub const Bitmap = struct {
     }
 
     /// Reclaims the space of every container left empty by andInPlace,
-    /// andNotInPlace or remove, together with its key. Key 0 always survives.
+    /// andNotInPlace or remove, together with its key, and of every dead slot
+    /// abandoned by container relocation. Key 0 always survives.
     ///
     /// Allocation-free: sroar collects the removed ranges into slices and sorts
     /// them; walking the buffer left to right instead needs no bookkeeping and
@@ -1036,6 +1130,7 @@ pub const Bitmap = struct {
         // container can be told apart from a live one by its cardinality alone.
         self.cleanupKeys();
         self.cleanupContainers();
+        self.dead = 0;
     }
 
     /// Drops the keys of empty containers, shrinking the node by exactly the

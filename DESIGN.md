@@ -26,7 +26,12 @@ calls, measured 2026-08).
 ## Memory layout
 
 One flat buffer per bitmap. Unit of measure throughout: **u16 elements** (not
-bytes). The buffer pointer is always 8-byte aligned.
+bytes). The buffer pointer is always 8-byte aligned. `AlignedU8`,
+`AlignedConstU8` and `AlignedU16` are the buffer/container slice aliases
+(`[]align(8) u8`, `[]align(8) const u8`, `[]align(8) u16`); the 8-byte
+alignment they carry is a correctness requirement, not a hint, since the
+keys node and bitmap-container payloads are both viewed as `[]u64` — the
+trailing number in the name is the element width, not the alignment.
 
 ```
 data: []align(8) u16
@@ -39,9 +44,10 @@ data: []align(8) u16
 
 ```zig
 pub const Bitmap = struct {
-    data: []align(8) u16,     // in-use region
-    cap: usize,               // allocated capacity in u16s (== data.len when borrowed)
-    owned: bool,              // false after fromBuffer; true after first grow (copy-out)
+    data: AlignedU16,  // in-use region
+    cap: usize,        // capacity in u16s (== data.len when borrowed)
+    owned: bool,        // false after fromBuffer; true after first grow
+    dead: usize = 0,    // dead u16s from relocation; see max_dead_divisor
     allocator: std.mem.Allocator,
 };
 ```
@@ -135,33 +141,68 @@ Conversion thresholds:
 
 ### Growth machinery (port of sroar bitmap.go, same names where sensible)
 
-- `fastExpand(bySize)`: grow `data` by bySize u16s. If capacity suffices, extend
-  length. Else allocate max(2×cap, cap+bySize) aligned, copy, set `owned =
-  true`. Newly exposed region must be zeroed before use (Zig allocators do not
-  zero; Go's bug here — Memclr counting elements as bytes — is not ported).
-- `scootRight(offset, bySize)`: open a zeroed hole at `offset` (fastExpand +
-  copyBackwards + @memset). Caller fixes offsets via `Keys.updateOffsets`
-  (strictly-greater-than comparison, so the container at `offset` itself
-  doesn't shift).
+- `scootRight(offset, bySize)`: the one growth primitive — open a zeroed hole of
+  bySize u16s at `offset`, growing `data` to suit. Caller fixes offsets via
+  `Keys.updateOffsets` (strictly-greater-than comparison, so the container at
+  `offset` itself doesn't shift). `offset == data.len` scoots nothing and is
+  therefore a plain append, which is how sroar's separate `fastExpand` is
+  spelled here. The newly opened hole must be zeroed before use (Zig allocators
+  do not zero; Go's bug here — Memclr counting elements as bytes — is not
+  ported).
+
+  Shaped after `std.array_list.addManyAt`, which solves the same problem:
+  - Capacity comes from `growCapacity(needed) = needed + needed/2 + 32`, lifted
+    from `std.array_list`. Growing off the length *required* rather than the
+    capacity *held* guarantees slack; sroar's `cap + max(cap, bySize)` lands on
+    exactly the new length whenever one step asks for more than the buffer
+    holds (a bitmap container arriving in a small buffer), so the next write
+    reallocates again.
+  - Growth tries `allocator.remap` first. For the C allocator that reaches
+    `realloc`, letting a large buffer grow by extending its mapping rather than
+    copying it. This works only because our alignment is 8: `remap` falls back
+    to `null` unconditionally once the requested alignment exceeds
+    `max_align_t`.
+  - When remap fails, the head `[0, offset)` and the tail `[offset, len)` are
+    copied straight to their final positions in the new allocation, so the tail
+    is copied once instead of being copied whole and then scooted.
+  - A borrowed buffer is never remapped or freed, only copied out of.
 - `newContainer(sz)`: append zeroed container at end, write header size,
   return offset.
-- `expandContainer(offset)`: double the container (or jump to 4100 + convert
-  array→bitmap at the 2048 threshold), scootRight + updateOffsets.
+- `expandContainer(key, offset)`: double the container (or jump to 4100 +
+  convert array→bitmap at the 2048 threshold). A container last in the
+  buffer grows by plain append. Any other container is MOVED to the end
+  of the buffer instead of grown in place: growing in place would memmove
+  everything behind it at every rung of the size ladder — quadratic over
+  a build — while the move costs one container copy plus a dead slot. The
+  key is repointed at the new offset; the old slot is zeroed behind its
+  size header, leaving a canonical empty array container (a "dead slot").
+  `copyAt(key, offset, src)` — which installs a finished container,
+  growing the existing one if `src` no longer fits — follows the same
+  rule, since `src` replaces the old contents entirely anyway.
+- Dead-slot policy: `markDead` tracks abandoned u16s in `Bitmap.dead`.
+  Once dead slots exceed a quarter of the buffer (`dead * max_dead_divisor
+  > data.len`, `max_dead_divisor = 4`), the mutating op runs `cleanup`
+  itself, bounding the waste a build-heavy workload can accumulate at 25%
+  of the buffer. Dead slots are canonical empty array containers, so the
+  existing cleanup machinery reclaims them with no new code. A buffer
+  serialized with dead slots still in it is valid — readers go through
+  the keys node and never see them — it is just larger than it needs
+  to be.
 - `setKey(key, offset) -> new offset`: insert key; if the node grew, every
   offset (including the one being set) shifts — callers must use the returned
   offset. Mirrors Go `bitmap.go:144-175`.
 
 ## Serialization
 
-- `toBuffer(self) []align(8) const u8` — `std.mem.sliceAsBytes(self.data)`.
-  O(1). Valid until the bitmap grows or is deinited. Empty bitmap returns its
+- `toBuffer(self) AlignedConstU8` — `std.mem.sliceAsBytes(self.data)`. O(1).
+  Valid until the bitmap grows or is deinited. Empty bitmap returns its
   (minimal, valid) buffer — no null special case.
-- `toBufferCopy(self, allocator) ![]align(8) u8` — owning copy.
-- `fromBuffer(allocator, buf: []align(8) u8) Bitmap` — O(1) view:
-  `buf.len % 2 == 0` and `buf.len >= minimal` required (else return a fresh
-  empty bitmap); `owned = false`; allocator retained for copy-on-grow. The
-  bitmap MAY be mutated; first growth copies out. Non-growing mutations write
-  through to the caller's buffer — documented.
+- `toBufferCopy(self, allocator) !AlignedU8` — owning copy.
+- `fromBuffer(allocator, buf: AlignedU8) Bitmap` — O(1) view: `buf.len % 2
+  == 0` and `buf.len >= minimal` required (else return a fresh empty
+  bitmap); `owned = false`; allocator retained for copy-on-grow. The
+  bitmap MAY be mutated; first growth copies out. Non-growing mutations
+  write through to the caller's buffer — documented.
 - `fromBufferCopy(allocator, buf: []const u8) !Bitmap` — copy up front
   (also the path for unaligned input).
 - **Format is little-endian by definition** — not "native-endian". On
@@ -194,7 +235,8 @@ Set ops: `andInPlace(*const Bitmap) void` (in-place, allocation-free),
 `orInPlace(*const Bitmap) !void`, `andNotInPlace(*const Bitmap) void`,
 `And(allocator, a, b) !Bitmap`, `Or(allocator, a, b) !Bitmap`,
 `fastOr(allocator, []const *const Bitmap) !Bitmap`, `cleanup() void`
-(compact zero-cardinality containers; preserves key 0).
+(compact zero-cardinality containers and relocation dead slots, resetting
+`dead`; preserves key 0).
 
 Error policy: only operations that may allocate return `error{OutOfMemory}!T`.
 All reads take `*const Bitmap` and cannot fail. Internal invariant violations

@@ -233,3 +233,48 @@ Correctness evidence: 70 unit tests + property tests vs a hashmap reference
 identical ops through zroar and roaring64 with zero divergence
 (`zig build difftest`); the test suite's sensitivity was itself verified by
 mutation testing (5 injected bugs, 5 caught).
+
+## Optimization round 4 (2026-08-10): growth path — ArrayList techniques,
+## then relocate-on-grow
+
+Two changes, measured separately by interleaved A/B (5 rounds, medians,
+`--oltp-random`).
+
+**4a. `scootRight` reshaped after `std.array_list.addManyAt`** (absorbing
+`fastExpand`): capacity from `growCapacity(needed) = needed + needed/2 + 32`
+(slack guaranteed — the old `cap + max(cap, by)` could land exactly on the
+new length), `allocator.remap` tried before alloc+copy (reaches `realloc`
+for the C allocator; works because our alignment is 8 ≤ max_align_t), and
+on fallback the head and tail are copied straight to their final positions.
+Result: **no measurable wall-clock change** — every bench within the ±5%
+noise floor established by untouched control benches. Kept anyway: it is
+what makes 4b's appends cheap, and serialized bytes are unchanged.
+
+**4b. Relocate-on-grow** (`expandContainer`, `copyAt`): a container that
+must grow mid-buffer is moved to the end and its key repointed, instead of
+memmoving everything behind it at every rung of the size ladder. The old
+slot is zeroed into a canonical empty array container; `Bitmap.dead` tracks
+the debt and the mutating op runs `cleanup` itself once dead slots exceed
+1/4 of the buffer (`max_dead_divisor`), bounding serialized waste at 25%.
+A buffer serialized with dead slots is valid — readers go through keys.
+
+| bench (--oltp-random) | before | after | delta |
+|---|---|---|---|
+| BuildSer-zroar | 46.0 ms | **18.1 ms** | **−60.7%** |
+| WarmContains-zroar | 55.2 µs | **38.7 µs** | **−29.9%** |
+| MixedOLTP-zroar | 127.9 ms | 122.9 ms | −3.9% |
+| Mixed90R10W-zroar | 5.42 s | 5.26 s | −2.9% |
+| everything else | | | within noise |
+
+The scattered-build gap vs r64 (which was 8.2×) is now **3.2×**; the same
+−60% replicates under `--oltp` since BuildSer's shape is mode-independent.
+The WarmContains win is a layout effect: relocation plus periodic
+compaction packs small array containers together instead of interleaving
+them with 8 KB bitmap containers, so random probes touch denser memory.
+Serialized union size is byte-identical (80,170,112 bytes, 1.45×; fastOr
+builds never relocate). Merge10K read +2.9%, inside the noise floor.
+
+Correctness: 4 new tests (mid-buffer relocation, mid-buffer array→bitmap
+conversion, the dead-space bound checked after every one of 6,000 sets plus
+a round-trip with dead slots present, borrowed-buffer copy-out), 97 tests
+green in Debug and ReleaseFast, difftest 810,000 ops with zero divergence.
