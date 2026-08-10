@@ -28,12 +28,89 @@ pub fn build(b: *std.Build) void {
     }) });
     test_step.dependOn(&b.addRunArtifact(prop_tests).step);
 
+    // The TPC-C-derived fixture format remains library-neutral. The generator
+    // uses resident zroar bitmaps only as an efficient, untimed construction
+    // data structure.
+    const tpcc_model_mod = b.createModule(.{
+        .root_source_file = b.path("bench/tpcc/model.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    tpcc_model_mod.addImport("zroar", mod);
+    const tpcc_model_tests = b.addTest(.{ .root_module = tpcc_model_mod });
+    test_step.dependOn(&b.addRunArtifact(tpcc_model_tests).step);
+
     // b.option panics if an option is declared twice, so anything shared by
     // the bench and difftest wiring is resolved exactly once, here.
     const roaring_zig = roaringZigRoot(b);
     const c_flags = croaringFlags(b, target);
     addBench(b, target, optimize, roaring_zig, c_flags);
     addDifftest(b, target, optimize, roaring_zig, c_flags);
+    addTpccBench(b, target, optimize, roaring_zig, c_flags);
+}
+
+/// Wires the portable TPC-C-derived fixture generator and the independent
+/// zroar/CRoaring replay benchmark.
+fn addTpccBench(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    roaring_zig: []const u8,
+    c_flags: []const []const u8,
+) void {
+    const bench_optimize: std.builtin.OptimizeMode =
+        if (optimize == .Debug) .ReleaseFast else optimize;
+    const zroar_mod = b.createModule(.{
+        .root_source_file = b.path("src/zroar.zig"),
+        .target = target,
+        .optimize = bench_optimize,
+    });
+
+    const generator = b.addExecutable(.{
+        .name = "tpcc-generate",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/tpcc/generate.zig"),
+            .target = target,
+            .optimize = bench_optimize,
+        }),
+    });
+    generator.root_module.addImport("zroar", zroar_mod);
+    const run_generator = b.addRunArtifact(generator);
+    if (b.args) |args| run_generator.addArgs(args);
+    const generate_step = b.step("tpcc-generate", "Generate portable TPC-C-derived bitmap-index fixtures");
+    generate_step.dependOn(&run_generator.step);
+
+    const croaring_include: std.Build.LazyPath =
+        .{ .cwd_relative = b.pathJoin(&.{ roaring_zig, "croaring" }) };
+    const croaring_source: std.Build.LazyPath =
+        .{ .cwd_relative = b.pathJoin(&.{ roaring_zig, "croaring", "roaring.c" }) };
+    const roaring64_source: std.Build.LazyPath =
+        .{ .cwd_relative = b.pathJoin(&.{ roaring_zig, "src", "roaring64.zig" }) };
+
+    const roaring64_mod = b.createModule(.{
+        .root_source_file = roaring64_source,
+        .target = target,
+        .optimize = bench_optimize,
+    });
+    roaring64_mod.addIncludePath(croaring_include);
+    const replay = b.addExecutable(.{
+        .name = "tpcc-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/tpcc/replay.zig"),
+            .target = target,
+            .optimize = bench_optimize,
+        }),
+    });
+    replay.root_module.addImport("zroar", zroar_mod);
+    replay.root_module.addImport("roaring64", roaring64_mod);
+    replay.root_module.addIncludePath(croaring_include);
+    replay.root_module.addCSourceFile(.{ .file = croaring_source, .flags = c_flags });
+    replay.root_module.link_libc = true;
+
+    const run_replay = b.addRunArtifact(replay);
+    if (b.args) |args| run_replay.addArgs(args);
+    const replay_step = b.step("tpcc-bench", "Replay TPC-C-derived bitmap-index fixtures through zroar and CRoaring");
+    replay_step.dependOn(&run_replay.step);
 }
 
 /// Wires up `zig build difftest`: identical op streams through zroar and

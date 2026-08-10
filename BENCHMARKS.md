@@ -232,3 +232,30 @@ Correctness evidence: 70 unit tests + property tests vs a hashmap reference
 identical ops through zroar and roaring64 with zero divergence
 (`zig build difftest`); the test suite's sensitivity was itself verified by
 mutation testing (5 injected bugs, 5 caught).
+
+## Reproducible TPC-C-derived uint64 index workload
+
+The older `--oltp` modes above are useful synthetic shapes, but they are not a
+standard transaction model. A separate generator/replay benchmark now derives
+indexed-table population and the 10/10/1/1/1 transaction deck from TPC-C 5.11,
+then compares zroar and CRoaring over dense, locality-packed, and bijectively
+scattered uint64 primary keys. It has resident and native-serialized lifecycle
+profiles, deterministic portable artifacts, checksums, per-operation expected
+answers, final-state digests, alternating library order, and an end-of-run
+winner table that says which implementation is faster in each case. The
+posting-list snapshot, immutable SELECT/read trace, and mutation-only write
+trace are separate artifacts: read timing never creates or rewrites a posting
+list, while write maintenance is reported separately.
+
+Generate and replay the canonical ten-warehouse, 23,000-transaction dataset:
+
+```sh
+zig build tpcc-generate -- --out /tmp/zroar-tpcc
+zig build -Doptimize=ReleaseFast tpcc-bench -- /tmp/zroar-tpcc
+zig build -Doptimize=ReleaseFast tpcc-bench -- /tmp/zroar-tpcc --workload write
+```
+
+This is a **TPC-C-derived bitmap-index workload**, not a TPC benchmark; its
+results are not comparable to TPC-C results and are never reported as tpmC.
+The complete schema mapping, format, commands, timing rules, limitations, and
+fair-use references are in [`bench/tpcc/README.md`](bench/tpcc/README.md).
