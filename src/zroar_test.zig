@@ -102,11 +102,16 @@ test "conversion happens exactly at the array ceiling" {
 
     _ = try bm.set(i);
     try testing.expectEqual(container.Type.bitmap, containerTypeOf(&bm, 0));
-    try testing.expectEqual(@as(u64, container.max_array_values), bm.getCardinality());
+    try testing.expectEqual(
+        @as(u64, container.max_array_values),
+        bm.getCardinality(),
+    );
     try checkInvariants(&bm);
 
     var j: u64 = 0;
-    while (j < container.max_array_values) : (j += 1) try testing.expect(bm.contains(j));
+    while (j < container.max_array_values) : (j += 1) {
+        try testing.expect(bm.contains(j));
+    }
 }
 
 test "random sets crossing the conversion agree with a reference set" {
@@ -187,7 +192,8 @@ test "hundreds of keys force repeated keys-node growth" {
     try testing.expectEqual(@as(u64, num_keys * per_key), bm.getCardinality());
     try checkInvariants(&bm);
 
-    // Every offset must still point at the right container after all the shifts.
+    // Every offset must still point at the right container after all the
+    // shifts.
     var k: u64 = 0;
     while (k < num_keys) : (k += 1) {
         var j: u64 = 0;
@@ -217,7 +223,8 @@ test "a container walks the whole size ladder one value at a time" {
         try testing.expect(try bm.set(i * 3));
         try testing.expectEqual(i + 2, bm.getCardinality());
         try checkInvariants(&bm); // includes the free-slot invariant
-        try testing.expect(bm.contains(1 << 32)); // the neighbour still resolves
+        // the neighbour still resolves
+        try testing.expect(bm.contains(1 << 32));
 
         const c = bm.getContainer(bm.keys().val(0));
         try seen_sizes.put(testing.allocator, container.size(c), {});
@@ -240,17 +247,20 @@ test "the smallest container fills and expands at exactly its capacity" {
     var bm = try Bitmap.init(testing.allocator);
     defer bm.deinit();
 
-    // min_size - start_idx values fit, but the last of them leaves no free slot,
-    // so `set` must expand before returning: a reader never sees a full container.
+    // min_size - start_idx values fit, but the last of them leaves no free
+    // slot, so `set` must expand before returning: a reader never sees a full
+    // container.
     const capacity = container.min_size - container.start_idx;
     var i: u64 = 0;
     while (i + 1 < capacity) : (i += 1) {
         _ = try bm.set(i);
-        try testing.expectEqual(container.min_size, container.size(bm.getContainer(bm.keys().val(0))));
+        const c = bm.getContainer(bm.keys().val(0));
+        try testing.expectEqual(container.min_size, container.size(c));
         try checkInvariants(&bm);
     }
     _ = try bm.set(i);
-    try testing.expectEqual(container.min_size * 2, container.size(bm.getContainer(bm.keys().val(0))));
+    const grown = bm.getContainer(bm.keys().val(0));
+    try testing.expectEqual(container.min_size * 2, container.size(grown));
     try testing.expectEqual(@as(u64, capacity), bm.getCardinality());
     try checkInvariants(&bm);
 }
@@ -259,16 +269,19 @@ test "keys-node growth past the doubling cap stays 8-byte aligned" {
     var bm = try Bitmap.init(testing.allocator);
     defer bm.deinit();
 
-    // The node doubles 24, 48, ... 98304 u16s; the step beyond that is capped at
-    // max_node_growth. 98304 u16s is 12287 key/offset pairs, so one more key
-    // than that exercises the capped path.
+    // The node doubles 24, 48, ... 98304 u16s; the step beyond that is capped
+    // at max_node_growth. 98304 u16s is 12287 key/offset pairs, so one more
+    // key than that exercises the capped path.
     const num_keys = 12_400;
     var k: u64 = 0;
     while (k < num_keys) : (k += 1) _ = try bm.set(k << 16);
 
     try testing.expectEqual(@as(usize, num_keys), bm.keys().numKeys());
     // Uncapped doubling would have produced 196608 u16s here.
-    try testing.expectEqual(@as(usize, 98304 + max_node_growth), bm.keys().size());
+    try testing.expectEqual(
+        @as(usize, 98304 + max_node_growth),
+        bm.keys().size(),
+    );
     try checkInvariants(&bm);
 
     k = 0;
@@ -292,9 +305,14 @@ test "keys-node growth interleaved with container growth" {
 
     k = 0;
     while (k < num_keys) : (k += 1) {
-        try testing.expectEqual(container.Type.bitmap, containerTypeOf(&bm, k << 16));
+        try testing.expectEqual(
+            container.Type.bitmap,
+            containerTypeOf(&bm, k << 16),
+        );
         var j: u64 = 0;
-        while (j < 2500) : (j += 1) try testing.expect(bm.contains((k << 16) | j));
+        while (j < 2500) : (j += 1) {
+            try testing.expect(bm.contains((k << 16) | j));
+        }
         try testing.expect(!bm.contains((k << 16) | 2500));
     }
 }
@@ -308,7 +326,10 @@ test "remove from both container types" {
     while (i < 100) : (i += 1) _ = try bm.set(i);
     while (i < 100 + 3000) : (i += 1) _ = try bm.set((1 << 16) | (i - 100));
     try testing.expectEqual(container.Type.array, containerTypeOf(&bm, 0));
-    try testing.expectEqual(container.Type.bitmap, containerTypeOf(&bm, 1 << 16));
+    try testing.expectEqual(
+        container.Type.bitmap,
+        containerTypeOf(&bm, 1 << 16),
+    );
 
     try testing.expect(bm.remove(50));
     try testing.expect(!bm.remove(50));
@@ -409,7 +430,10 @@ test "toArray is sorted and matches the reference set" {
     defer testing.allocator.free(got);
     try testing.expectEqualSlices(u64, ref.items, got);
     try testing.expectEqual(@as(?u64, ref.items[0]), bm.minimum());
-    try testing.expectEqual(@as(?u64, ref.items[ref.items.len - 1]), bm.maximum());
+    try testing.expectEqual(
+        @as(?u64, ref.items[ref.items.len - 1]),
+        bm.maximum(),
+    );
     try checkInvariants(&bm);
 }
 
@@ -472,7 +496,8 @@ test "empty bitmap round trip" {
 
 test "fromBuffer rejects buffers too small to be a bitmap" {
     var odd: [min_buffer_bytes + 1]u8 align(8) = .{0} ** (min_buffer_bytes + 1);
-    var short: [min_buffer_bytes - 2]u8 align(8) = .{0} ** (min_buffer_bytes - 2);
+    var short: [min_buffer_bytes - 2]u8 align(8) =
+        .{0} ** (min_buffer_bytes - 2);
 
     var a = try Bitmap.fromBuffer(testing.allocator, &odd);
     defer a.deinit();
@@ -490,9 +515,10 @@ test "fromBuffer rejects buffers too small to be a bitmap" {
 test "mutating a borrowed bitmap without growth writes through" {
     var src = try Bitmap.init(testing.allocator);
     defer src.deinit();
-    // Two values, so that key 0's container still has room for a third whatever
-    // container.min_size is: it is a power of two above the 4-u16 header, so the
-    // smallest container has at least four slots and three values never fill it.
+    // Two values, so that key 0's container still has room for a third
+    // whatever container.min_size is: it is a power of two above the 4-u16
+    // header, so the smallest container has at least four slots and three
+    // values never fill it.
     _ = try src.set(1);
     _ = try src.set(2);
 
@@ -569,7 +595,9 @@ test "a grown borrowed bitmap keeps growing correctly" {
     try checkInvariants(&view);
 
     i = 0;
-    while (i < 5000) : (i += 1) try testing.expect(view.contains((i % 50 << 32) | i));
+    while (i < 5000) : (i += 1) {
+        try testing.expect(view.contains((i % 50 << 32) | i));
+    }
 }
 
 test "fromBufferCopy owns its data and tolerates unaligned input" {
@@ -581,7 +609,8 @@ test "fromBufferCopy owns its data and tolerates unaligned input" {
     const buf = try src.toBufferCopy(testing.allocator);
     defer testing.allocator.free(buf);
 
-    // Copy into a deliberately misaligned window to prove no alignment is assumed.
+    // Copy into a deliberately misaligned window to prove no alignment is
+    // assumed.
     const scratch = try testing.allocator.alloc(u8, buf.len + 2);
     defer testing.allocator.free(scratch);
     @memcpy(scratch[2..], buf);
@@ -638,7 +667,8 @@ fn randomValues(rnd: std.Random, out: []u64) void {
     }
 }
 
-/// The bitmap holds exactly the reference set's values, and its layout is sound.
+/// The bitmap holds exactly the reference set's values, and its layout is
+/// sound.
 fn expectSameAs(ref: *const RefSet, bm: *const Bitmap) !void {
     try testing.expectEqual(@as(u64, ref.count()), bm.getCardinality());
 
@@ -720,7 +750,8 @@ fn expectAndIsCompact(bm: *const Bitmap) !void {
 
 test "And sizes each result container to the result" {
     // Both operands hold a bitmap container under key 0, so the kernel that
-    // runs is bitmap ∩ bitmap and only the overlap decides the result's shape.
+    // runs is bitmap ∩ bitmap and only the overlap decides the result's
+    // shape.
     var a = try Bitmap.init(testing.allocator);
     defer a.deinit();
     var i: u64 = 0;
@@ -738,7 +769,8 @@ test "And sizes each result container to the result" {
     defer got.deinit();
     try testing.expectEqual(@as(u64, 2043), got.getCardinality());
     try testing.expectEqual(container.Type.array, containerTypeOf(&got, 0));
-    try testing.expectEqual(@as(u16, 2048), container.size(got.getContainer(got.keys().val(0))));
+    const got_c = got.getContainer(got.keys().val(0));
+    try testing.expectEqual(@as(u16, 2048), container.size(got_c));
     try testing.expectEqual(@as(?u64, 2957), got.minimum());
     try testing.expectEqual(@as(?u64, 4999), got.maximum());
     try checkInvariants(&got);
@@ -763,14 +795,17 @@ test "And sizes each result container to the result" {
     var got3 = try Bitmap.And(testing.allocator, &a, &sparse);
     defer got3.deinit();
     try testing.expectEqual(@as(u64, 3), got3.getCardinality());
-    try testing.expectEqual(container.min_size, container.size(got3.getContainer(got3.keys().val(0))));
-    try testing.expectEqual(@as(usize, 1), got3.keys().numKeys()); // key 1<<40 dropped
+    const got3_c = got3.getContainer(got3.keys().val(0));
+    try testing.expectEqual(container.min_size, container.size(got3_c));
+    // key 1<<40 dropped
+    try testing.expectEqual(@as(usize, 1), got3.keys().numKeys());
     try checkInvariants(&got3);
     try expectAndIsCompact(&got3);
 }
 
 test "And of disjoint bitmaps leaves only key 0" {
-    // Shared keys whose values miss each other, plus keys held by one side only.
+    // Shared keys whose values miss each other, plus keys held by one side
+    // only.
     var a = try testBitmap(&.{ 1, 3, (1 << 16) | 7, 1 << 32 });
     defer a.deinit();
     var b = try testBitmap(&.{ 2, 4, (1 << 16) | 8, 3 << 32 });
@@ -783,7 +818,10 @@ test "And of disjoint bitmaps leaves only key 0" {
     try testing.expectEqual(@as(usize, 1), got.keys().numKeys());
     // Key 0's container from init is the only one in the buffer; nothing else
     // was appended and nothing had to be compacted away.
-    try testing.expectEqual(got.keys().size() + container.min_size, got.data.len);
+    try testing.expectEqual(
+        got.keys().size() + container.min_size,
+        got.data.len,
+    );
     try checkInvariants(&got);
     try expectAndIsCompact(&got);
 }
@@ -809,7 +847,10 @@ test "And result round trips through a buffer bit identically" {
     var got = try Bitmap.And(testing.allocator, &a, &b);
     defer got.deinit();
     try testing.expectEqual(container.Type.bitmap, containerTypeOf(&got, 0));
-    try testing.expectEqual(container.Type.array, containerTypeOf(&got, 1 << 32));
+    try testing.expectEqual(
+        container.Type.array,
+        containerTypeOf(&got, 1 << 32),
+    );
 
     const buf = try got.toBufferCopy(testing.allocator);
     defer testing.allocator.free(buf);
@@ -957,8 +998,9 @@ test "fused cardinalities agree with the materialized results" {
 }
 
 test "fused cardinalities on dense consecutive ranges" {
-    // The u7-popcount shape: overlapping runs long enough that a bitmap∩bitmap
-    // chunk is fully set, which an unwidened @reduce would wrap at 128.
+    // The u7-popcount shape: overlapping runs long enough that a
+    // bitmap∩bitmap chunk is fully set, which an unwidened @reduce would
+    // wrap at 128.
     var av: [5000]u64 = undefined;
     for (&av, 0..) |*v, i| v.* = i;
     var bv: [5000]u64 = undefined;
@@ -1185,7 +1227,8 @@ test "andInPlace on containers that disagree on type" {
     a.andInPlace(&sparse);
     try testing.expectEqual(@as(u64, 2), a.getCardinality());
     try testing.expect(a.contains(5) and a.contains(1 << 32));
-    try testing.expectEqual(container.Type.bitmap, containerTypeOf(&a, 0)); // never demoted
+    // never demoted
+    try testing.expectEqual(container.Type.bitmap, containerTypeOf(&a, 0));
     try checkInvariants(&a);
 
     var b = try sparse.clone();
@@ -1310,7 +1353,10 @@ test "fastOr edge cases: none, one, disjoint keys, one shared key" {
     var s = try Bitmap.fastOr(testing.allocator, &sptrs);
     defer s.deinit();
     try expectSameAs(&sref, &s);
-    try testing.expectEqual(container.Type.bitmap, containerTypeOf(&s, 1 << 48));
+    try testing.expectEqual(
+        container.Type.bitmap,
+        containerTypeOf(&s, 1 << 48),
+    );
 }
 
 test "fromSortedList matches a set loop and round trips" {
@@ -1330,7 +1376,10 @@ test "fromSortedList matches a set loop and round trips" {
     var ref = try testRefSet(&vals);
     defer ref.deinit(testing.allocator);
     try expectSameAs(&ref, &built);
-    try testing.expectEqual(container.Type.bitmap, containerTypeOf(&built, 1 << 32));
+    try testing.expectEqual(
+        container.Type.bitmap,
+        containerTypeOf(&built, 1 << 32),
+    );
 
     var looped = try testBitmap(&vals);
     defer looped.deinit();
@@ -1353,7 +1402,10 @@ test "fromSortedList matches a set loop and round trips" {
     try testing.expect(none.isEmpty());
     try checkInvariants(&none);
 
-    var one = try Bitmap.fromSortedList(testing.allocator, &.{std.math.maxInt(u64)});
+    var one = try Bitmap.fromSortedList(
+        testing.allocator,
+        &.{std.math.maxInt(u64)},
+    );
     defer one.deinit();
     try testing.expectEqual(@as(u64, 1), one.getCardinality());
     try testing.expect(one.contains(std.math.maxInt(u64)));
@@ -1376,12 +1428,14 @@ test "cleanup compacts the buffer and keeps key 0" {
 
     bm.andInPlace(&keep);
     try testing.expectEqual(@as(u64, 1), bm.getCardinality());
-    try testing.expectEqual(keys_before, bm.keys().numKeys()); // nothing removed yet
+    // nothing removed yet
+    try testing.expectEqual(keys_before, bm.keys().numKeys());
     try testing.expectEqual(len_before, bm.data.len);
 
     bm.cleanup();
     try testing.expect(bm.data.len < len_before);
-    try testing.expectEqual(@as(usize, 2), bm.keys().numKeys()); // key 0 and key 7
+    // key 0 and key 7
+    try testing.expectEqual(@as(usize, 2), bm.keys().numKeys());
     try testing.expectEqual(@as(u64, 0), bm.keys().key(0));
     try testing.expectEqual(@as(u64, 1), bm.getCardinality());
     try testing.expect(bm.contains((@as(u64, 7) << 32) | 35));
@@ -1539,7 +1593,10 @@ test "chains of operations keep agreeing with a reference set" {
             if (rnd.boolean()) {
                 const buf = try bm.toBufferCopy(testing.allocator);
                 defer testing.allocator.free(buf);
-                const reopened = try Bitmap.fromBufferCopy(testing.allocator, buf);
+                const reopened = try Bitmap.fromBufferCopy(
+                    testing.allocator,
+                    buf,
+                );
                 bm.deinit();
                 bm = reopened;
                 try expectSameAs(&ref, &bm);

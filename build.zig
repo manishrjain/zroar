@@ -45,12 +45,15 @@ fn addDifftest(
     const diff_optimize: std.builtin.OptimizeMode =
         if (optimize == .Debug) .ReleaseSafe else optimize;
 
-    const croaring_include: std.Build.LazyPath =
-        .{ .cwd_relative = b.pathJoin(&.{ roaring_zig, "croaring" }) };
-    const croaring_source: std.Build.LazyPath =
-        .{ .cwd_relative = b.pathJoin(&.{ roaring_zig, "croaring", "roaring.c" }) };
-    const roaring64_source: std.Build.LazyPath =
-        .{ .cwd_relative = b.pathJoin(&.{ roaring_zig, "src", "roaring64.zig" }) };
+    const croaring_include: std.Build.LazyPath = .{
+        .cwd_relative = b.pathJoin(&.{ roaring_zig, "croaring" }),
+    };
+    const croaring_source: std.Build.LazyPath = .{
+        .cwd_relative = b.pathJoin(&.{ roaring_zig, "croaring", "roaring.c" }),
+    };
+    const roaring64_source: std.Build.LazyPath = .{
+        .cwd_relative = b.pathJoin(&.{ roaring_zig, "src", "roaring64.zig" }),
+    };
 
     const roaring64_mod = b.createModule(.{
         .root_source_file = roaring64_source,
@@ -76,10 +79,16 @@ fn addDifftest(
     exe.root_module.addImport("zroar", zroar_mod);
     exe.root_module.addImport("roaring64", roaring64_mod);
     exe.root_module.addIncludePath(croaring_include);
-    exe.root_module.addCSourceFile(.{ .file = croaring_source, .flags = c_flags });
+    exe.root_module.addCSourceFile(.{
+        .file = croaring_source,
+        .flags = c_flags,
+    });
     exe.root_module.link_libc = true;
 
-    const step = b.step("difftest", "Run the zroar vs roaring64 differential test");
+    const step = b.step(
+        "difftest",
+        "Run the zroar vs roaring64 differential test",
+    );
     step.dependOn(&b.addRunArtifact(exe).step);
 }
 
@@ -99,12 +108,15 @@ fn addBench(
 
     // roaring-zig lives outside this build root and `b.path` refuses to escape
     // it, so every file over there is named by absolute path instead.
-    const croaring_include: std.Build.LazyPath =
-        .{ .cwd_relative = b.pathJoin(&.{ roaring_zig, "croaring" }) };
-    const croaring_source: std.Build.LazyPath =
-        .{ .cwd_relative = b.pathJoin(&.{ roaring_zig, "croaring", "roaring.c" }) };
-    const roaring64_source: std.Build.LazyPath =
-        .{ .cwd_relative = b.pathJoin(&.{ roaring_zig, "src", "roaring64.zig" }) };
+    const croaring_include: std.Build.LazyPath = .{
+        .cwd_relative = b.pathJoin(&.{ roaring_zig, "croaring" }),
+    };
+    const croaring_source: std.Build.LazyPath = .{
+        .cwd_relative = b.pathJoin(&.{ roaring_zig, "croaring", "roaring.c" }),
+    };
+    const roaring64_source: std.Build.LazyPath = .{
+        .cwd_relative = b.pathJoin(&.{ roaring_zig, "src", "roaring64.zig" }),
+    };
 
     const roaring64_mod = b.createModule(.{
         .root_source_file = roaring64_source,
@@ -113,8 +125,8 @@ fn addBench(
     });
     roaring64_mod.addIncludePath(croaring_include);
 
-    // The library module registered above carries the build's own optimize mode;
-    // the bench needs zroar built the same way the bench itself is.
+    // The library module registered above carries the build's own optimize
+    // mode; the bench needs zroar built the same way the bench itself is.
     const zroar_mod = b.createModule(.{
         .root_source_file = b.path("src/zroar.zig"),
         .target = target,
@@ -131,16 +143,22 @@ fn addBench(
     });
     exe.root_module.addImport("zroar", zroar_mod);
     exe.root_module.addImport("roaring64", roaring64_mod);
-    // The bench's root module is what compiles CRoaring, so it needs the headers
-    // as well as the roaring64 wrapper module that @cImport's them.
+    // The bench's root module is what compiles CRoaring, so it needs the
+    // headers as well as the roaring64 wrapper module that @cImport's them.
     exe.root_module.addIncludePath(croaring_include);
-    exe.root_module.addCSourceFile(.{ .file = croaring_source, .flags = c_flags });
+    exe.root_module.addCSourceFile(.{
+        .file = croaring_source,
+        .flags = c_flags,
+    });
     exe.root_module.link_libc = true;
 
     const run = b.addRunArtifact(exe);
     if (b.args) |args| run.addArgs(args);
 
-    const step = b.step("bench", "Run the zroar vs roaring64 benchmarks (pass a data dir after --)");
+    const step = b.step(
+        "bench",
+        "Run the zroar vs roaring64 benchmarks (pass a data dir after --)",
+    );
     step.dependOn(&run.step);
 }
 
@@ -157,30 +175,45 @@ fn roaringZigRoot(b: *std.Build) []const u8 {
 
 /// The AVX512 auto-detect block from roaring-zig/build.zig: CRoaring's AVX512
 /// kernels are compiled in only when the target CPU actually has the features.
-fn croaringFlags(b: *std.Build, target: std.Build.ResolvedTarget) []const []const u8 {
-    const disable_avx512 = b.option(bool, "ROARING_DISABLE_AVX512", "Disable AVX512 in CRoaring") orelse blk: {
+fn croaringFlags(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+) []const []const u8 {
+    const disable_avx512 = b.option(
+        bool,
+        "ROARING_DISABLE_AVX512",
+        "Disable AVX512 in CRoaring",
+    ) orelse blk: {
         const resolved_target = b.resolveTargetQuery(target.query);
         const cpu_arch = resolved_target.result.cpu.arch;
 
         // AVX512 is only available on x86_64 architecture
         if (cpu_arch != .x86_64) {
-            std.log.info("Non-x86_64 target detected ({s}), disabling AVX512 in CRoaring", .{@tagName(cpu_arch)});
+            std.log.info("Non-x86_64 target detected ({s}), disabling " ++
+                "AVX512 in CRoaring", .{@tagName(cpu_arch)});
             break :blk true; // disable AVX512
         }
 
         // For x86_64, check if the CPU supports the required AVX512 features
         const cpu_features = resolved_target.result.cpu.features;
-        const has_avx512f = cpu_features.isEnabled(@intFromEnum(std.Target.x86.Feature.avx512f));
-        const has_avx512dq = cpu_features.isEnabled(@intFromEnum(std.Target.x86.Feature.avx512dq));
-        const has_avx512bw = cpu_features.isEnabled(@intFromEnum(std.Target.x86.Feature.avx512bw));
+        const Feature = std.Target.x86.Feature;
+        const has_avx512f =
+            cpu_features.isEnabled(@intFromEnum(Feature.avx512f));
+        const has_avx512dq =
+            cpu_features.isEnabled(@intFromEnum(Feature.avx512dq));
+        const has_avx512bw =
+            cpu_features.isEnabled(@intFromEnum(Feature.avx512bw));
 
         // CRoaring requires multiple AVX512 features, not just AVX512F
-        const has_required_avx512 = has_avx512f and has_avx512dq and has_avx512bw;
+        const has_required_avx512 =
+            has_avx512f and has_avx512dq and has_avx512bw;
 
         if (!has_required_avx512) {
-            std.log.info("AVX512 features not detected on x86_64 target CPU, disabling AVX512 in CRoaring", .{});
+            std.log.info("AVX512 features not detected on x86_64 target " ++
+                "CPU, disabling AVX512 in CRoaring", .{});
         } else {
-            std.log.info("AVX512 features detected on x86_64 target CPU, enabling AVX512 optimizations", .{});
+            std.log.info("AVX512 features detected on x86_64 target CPU, " ++
+                "enabling AVX512 optimizations", .{});
         }
 
         break :blk !has_required_avx512;

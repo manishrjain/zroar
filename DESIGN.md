@@ -5,8 +5,8 @@ bitmaps over u64 keys). The defining property: **the on-disk representation is
 the in-memory representation**. Opening a serialized bitmap (`fromBuffer`) is
 O(1) — no parsing, no per-container allocation. This exists to benchmark
 against roaring-zig (CRoaring's `roaring64_bitmap_t`), where every open costs a
-full portable deserialize (~1–2 µs per small bitmap, ≈75–280 `contains` calls,
-measured 2026-08).
+full portable deserialize (~1–2 µs per small bitmap, ≈75–280 `contains`
+calls, measured 2026-08).
 
 ## Non-negotiable constraints
 
@@ -135,11 +135,10 @@ Conversion thresholds:
 
 ### Growth machinery (port of sroar bitmap.go, same names where sensible)
 
-- `fastExpand(bySize)`: grow `data` by bySize u16s. If capacity suffices,
-  extend length. Else allocate max(2×cap, cap+bySize) aligned, copy, set
-  `owned = true`. Newly exposed region must be zeroed before use (Zig
-  allocators do not zero; Go's bug here — Memclr counting elements as bytes —
-  is not ported).
+- `fastExpand(bySize)`: grow `data` by bySize u16s. If capacity suffices, extend
+  length. Else allocate max(2×cap, cap+bySize) aligned, copy, set `owned =
+  true`. Newly exposed region must be zeroed before use (Zig allocators do not
+  zero; Go's bug here — Memclr counting elements as bytes — is not ported).
 - `scootRight(offset, bySize)`: open a zeroed hole at `offset` (fastExpand +
   copyBackwards + @memset). Caller fixes offsets via `Keys.updateOffsets`
   (strictly-greater-than comparison, so the container at `offset` itself

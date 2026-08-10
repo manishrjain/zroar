@@ -84,7 +84,8 @@ pub const Keys = struct {
         self.n[valOffset(i)] = v;
     }
 
-    /// Returns the index of the smallest key >= k, or numKeys() if there is none.
+    /// Returns the index of the smallest key >= k, or numKeys() if there is
+    /// none.
     pub fn search(self: Keys, k: u64) usize {
         var lo: usize = 0;
         var hi: usize = self.numKeys();
@@ -95,7 +96,8 @@ pub const Keys = struct {
         return lo;
     }
 
-    /// Returns the container offset registered for k, or null if k has no container.
+    /// Returns the container offset registered for k, or null if k has no
+    /// container.
     pub fn getValue(self: Keys, k: u64) ?usize {
         const masked = k & key_mask;
         const idx = self.search(masked);

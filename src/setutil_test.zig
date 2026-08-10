@@ -14,7 +14,8 @@ const localintersect2by2 = setutil.localintersect2by2;
 const onesidedgallopingintersect2by2 = setutil.onesidedgallopingintersect2by2;
 const intersection2by2Cardinality = setutil.intersection2by2Cardinality;
 const localintersect2by2Cardinality = setutil.localintersect2by2Cardinality;
-const onesidedgallopingintersect2by2Cardinality = setutil.onesidedgallopingintersect2by2Cardinality;
+const onesidedgallopingintersect2by2Cardinality =
+    setutil.onesidedgallopingintersect2by2Cardinality;
 const advanceUntil = setutil.advanceUntil;
 const difference = setutil.difference;
 
@@ -81,14 +82,23 @@ test "intersection2by2 crosses the galloping threshold both ways" {
     const small = [_]u16{ 0, 600, 1497 }; // 1497 == large[499]
     var buf: [500]u16 = undefined;
 
-    try testing.expectEqual(@as(usize, 3), intersection2by2(&small, &large, &buf));
+    try testing.expectEqual(
+        @as(usize, 3),
+        intersection2by2(&small, &large, &buf),
+    );
     try testing.expectEqualSlices(u16, &small, buf[0..3]);
-    try testing.expectEqual(@as(usize, 3), intersection2by2(&large, &small, &buf));
+    try testing.expectEqual(
+        @as(usize, 3),
+        intersection2by2(&large, &small, &buf),
+    );
     try testing.expectEqualSlices(u16, &small, buf[0..3]);
 
     // A small set with no matches at all, and one that runs past the large set.
     const miss = [_]u16{ 1, 2, 1498 };
-    try testing.expectEqual(@as(usize, 0), intersection2by2(&miss, &large, &buf));
+    try testing.expectEqual(
+        @as(usize, 0),
+        intersection2by2(&miss, &large, &buf),
+    );
 }
 
 test "galloping and local intersection agree" {
@@ -122,7 +132,10 @@ test "intersection2by2Cardinality agrees with intersection2by2" {
         .{ &sub, &a },
     }) |pair| {
         const want = intersection2by2(pair[0], pair[1], &buf);
-        try testing.expectEqual(want, intersection2by2Cardinality(pair[0], pair[1]));
+        try testing.expectEqual(
+            want,
+            intersection2by2Cardinality(pair[0], pair[1]),
+        );
     }
 
     // Past the 64x skew threshold, where both dispatchers pick galloping.
@@ -131,9 +144,18 @@ test "intersection2by2Cardinality agrees with intersection2by2" {
     const small = [_]u16{ 0, 600, 1497 };
     const miss = [_]u16{ 1, 2, 1498 };
 
-    try testing.expectEqual(@as(usize, 3), intersection2by2Cardinality(&small, &large));
-    try testing.expectEqual(@as(usize, 3), intersection2by2Cardinality(&large, &small));
-    try testing.expectEqual(@as(usize, 0), intersection2by2Cardinality(&miss, &large));
+    try testing.expectEqual(
+        @as(usize, 3),
+        intersection2by2Cardinality(&small, &large),
+    );
+    try testing.expectEqual(
+        @as(usize, 3),
+        intersection2by2Cardinality(&large, &small),
+    );
+    try testing.expectEqual(
+        @as(usize, 0),
+        intersection2by2Cardinality(&miss, &large),
+    );
 
     // The galloping and the linear kernel must count the same thing.
     try testing.expectEqual(
@@ -143,7 +165,11 @@ test "intersection2by2Cardinality agrees with intersection2by2" {
 }
 
 /// The obvious intersection, for the block kernel to be checked against.
-fn referenceIntersect(set1: []const u16, set2: []const u16, buffer: []u16) usize {
+fn referenceIntersect(
+    set1: []const u16,
+    set2: []const u16,
+    buffer: []u16,
+) usize {
     var pos: usize = 0;
     for (set1) |v| {
         if (std.mem.indexOfScalar(u16, set2, v) != null) {
@@ -164,29 +190,50 @@ fn expectLocalIntersect(set1: []const u16, set2: []const u16) !void {
     for ([_][2][]const u16{ .{ set1, set2 }, .{ set2, set1 } }) |pair| {
         const m = localintersect2by2(pair[0], pair[1], &got);
         try testing.expectEqualSlices(u16, want[0..n], got[0..m]);
-        try testing.expectEqual(n, localintersect2by2Cardinality(pair[0], pair[1]));
+        try testing.expectEqual(
+            n,
+            localintersect2by2Cardinality(pair[0], pair[1]),
+        );
     }
 }
 
 test "localintersect2by2 finds a match in every pair of block lanes" {
-    // One shared value at lane k of set1 and lane l of set2, for all 64 (k, l):
-    // every lane of set2 has to be rotated past every lane of set1. Padding is
-    // even on the set1 side and odd on the set2 side, so 1000 is the only match.
+    // One shared value at lane k of set1 and lane l of set2, for all 64
+    // (k, l): every lane of set2 has to be rotated past every lane of set1.
+    // Padding is even on the set1 side and odd on the set2 side, so 1000
+    // is the only match.
     for (0..8) |k| {
         for (0..8) |l| {
             var a: [8]u16 = undefined;
             var b: [8]u16 = undefined;
             for (&a, 0..) |*v, i| {
-                v.* = @intCast(1000 + 2 * @as(i32, @intCast(i)) - 2 * @as(i32, @intCast(k)));
+                const di = 2 * @as(i32, @intCast(i));
+                const dk = 2 * @as(i32, @intCast(k));
+                const off = di - dk;
+                v.* = @intCast(1000 + off);
             }
             for (&b, 0..) |*v, j| {
-                const off = 2 * @as(i32, @intCast(j)) - 2 * @as(i32, @intCast(l));
-                v.* = @intCast(1000 + off + if (j == l) @as(i32, 0) else if (j < l) @as(i32, -1) else 1);
+                const dj = 2 * @as(i32, @intCast(j));
+                const dl = 2 * @as(i32, @intCast(l));
+                const off = dj - dl;
+                const adj = if (j == l)
+                    @as(i32, 0)
+                else if (j < l)
+                    @as(i32, -1)
+                else
+                    1;
+                v.* = @intCast(1000 + off + adj);
             }
             var buf: [8]u16 = undefined;
-            try testing.expectEqual(@as(usize, 1), localintersect2by2(&a, &b, &buf));
+            try testing.expectEqual(
+                @as(usize, 1),
+                localintersect2by2(&a, &b, &buf),
+            );
             try testing.expectEqual(@as(u16, 1000), buf[0]);
-            try testing.expectEqual(@as(usize, 1), localintersect2by2Cardinality(&a, &b));
+            try testing.expectEqual(
+                @as(usize, 1),
+                localintersect2by2Cardinality(&a, &b),
+            );
         }
     }
 }
@@ -194,8 +241,14 @@ test "localintersect2by2 finds a match in every pair of block lanes" {
 test "localintersect2by2 blocks with equal maxes advance both sides" {
     // Both first blocks end at 100 and both second blocks end at 200: every
     // comparison is a tie, so both sides step on every iteration.
-    const a = [_]u16{ 1, 2, 3, 4, 5, 6, 7, 100, 101, 102, 103, 104, 105, 106, 107, 200 };
-    const b = [_]u16{ 10, 20, 30, 40, 50, 60, 70, 100, 110, 120, 130, 140, 150, 160, 170, 200 };
+    const a = [_]u16{
+        1,   2,   3,   4,   5,   6,   7,   100,
+        101, 102, 103, 104, 105, 106, 107, 200,
+    };
+    const b = [_]u16{
+        10,  20,  30,  40,  50,  60,  70,  100,
+        110, 120, 130, 140, 150, 160, 170, 200,
+    };
     try expectLocalIntersect(&a, &b);
 
     var buf: [16]u16 = undefined;
@@ -210,10 +263,19 @@ test "localintersect2by2 all-match and no-match blocks" {
     for (&odd, 0..) |*v, i| v.* = @intCast(i * 2 + 1);
 
     var buf: [64]u16 = undefined;
-    try testing.expectEqual(@as(usize, 64), localintersect2by2(&all, &all, &buf));
+    try testing.expectEqual(
+        @as(usize, 64),
+        localintersect2by2(&all, &all, &buf),
+    );
     try testing.expectEqualSlices(u16, &all, buf[0..64]);
-    try testing.expectEqual(@as(usize, 0), localintersect2by2(&all, &odd, &buf));
-    try testing.expectEqual(@as(usize, 0), localintersect2by2Cardinality(&all, &odd));
+    try testing.expectEqual(
+        @as(usize, 0),
+        localintersect2by2(&all, &odd, &buf),
+    );
+    try testing.expectEqual(
+        @as(usize, 0),
+        localintersect2by2Cardinality(&all, &odd),
+    );
 
     // A block that matches entirely, followed by one that matches not at all.
     const half = all[0..8] ++ odd[8..16];
@@ -298,8 +360,14 @@ test "advanceUntil" {
     try testing.expectEqual(@as(usize, 1), advanceUntil(&a, 0, 10));
     try testing.expectEqual(@as(usize, 2), advanceUntil(&a, 0, 11));
     try testing.expectEqual(@as(usize, 5), advanceUntil(&a, 0, 50));
-    try testing.expectEqual(@as(usize, 6), advanceUntil(&a, 0, 51)); // nothing >= min
-    try testing.expectEqual(@as(usize, 6), advanceUntil(&a, 5, 0)); // pos at the end
+    try testing.expectEqual(
+        @as(usize, 6),
+        advanceUntil(&a, 0, 51),
+    ); // nothing >= min
+    try testing.expectEqual(
+        @as(usize, 6),
+        advanceUntil(&a, 5, 0),
+    ); // pos at the end
 
     // Long array so the exponential probe actually doubles a few times.
     var long: [300]u16 = undefined;

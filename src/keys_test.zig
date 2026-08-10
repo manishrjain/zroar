@@ -77,7 +77,10 @@ test "updateOffsets shifts only offsets beyond the boundary" {
 
     ks.updateOffsets(200, 64, true);
     try testing.expectEqual(@as(usize, 100), ks.val(0));
-    try testing.expectEqual(@as(usize, 200), ks.val(1)); // at the boundary: unmoved
+    try testing.expectEqual(
+        @as(usize, 200),
+        ks.val(1),
+    ); // at the boundary: unmoved
     try testing.expectEqual(@as(usize, 364), ks.val(2));
 
     ks.updateOffsets(200, 64, false);

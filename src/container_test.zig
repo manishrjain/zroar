@@ -45,7 +45,8 @@ fn arraySize(n: usize) u16 {
     return arraySizeFor(n).?;
 }
 
-/// Allocates a zeroed, 8-byte-aligned container of `sz` u16s with the header set.
+/// Allocates a zeroed, 8-byte-aligned container of `sz` u16s with the
+/// header set.
 fn testContainer(sz: u16, t: Type) ![]align(8) u16 {
     const c = try testing.allocator.alignedAlloc(u16, .@"8", sz);
     @memset(c, 0);
@@ -142,8 +143,9 @@ test "array to bitmap conversion preserves membership" {
     const c = try testContainer(max_size, .array);
     defer testing.allocator.free(c);
 
-    // Values chosen so some land in low words and some in high words, which is
-    // exactly the case an in-place conversion without a scratch copy would break.
+    // Values chosen so some land in low words and some in high words,
+    // which is exactly the case an in-place conversion without a scratch
+    // copy would break.
     var expected: [max_array_values]u16 = undefined;
     var i: usize = 0;
     while (i < max_array_values) : (i += 1) {
@@ -190,7 +192,10 @@ test "cardinality header is a u32 spanning both header slots" {
     // 65536 does not fit in one u16, so it must spill into the second slot.
     setCardinality(c, max_cardinality);
     try testing.expectEqual(@as(u32, max_cardinality), getCardinality(c));
-    try testing.expectEqual(@as(u16, 1), c[index_cardinality] | c[index_cardinality + 1]);
+    try testing.expectEqual(
+        @as(u16, 1),
+        c[index_cardinality] | c[index_cardinality + 1],
+    );
     setCardinality(c, invalid_cardinality);
     try testing.expectEqual(invalid_cardinality, getCardinality(c));
     setCardinality(c, 0);
@@ -232,9 +237,11 @@ test "containerAnd over all four container type pairs" {
 
     for ([_]Type{ .array, .bitmap }) |dt| {
         for ([_]Type{ .array, .bitmap }) |st| {
-            const a = try testContainer(if (dt == .array) arraySize(left.len) else max_size, dt);
+            const a_size = if (dt == .array) arraySize(left.len) else max_size;
+            const a = try testContainer(a_size, dt);
             defer testing.allocator.free(a);
-            const b = try testContainer(if (st == .array) arraySize(right.len) else max_size, st);
+            const b_size = if (st == .array) arraySize(right.len) else max_size;
+            const b = try testContainer(b_size, st);
             defer testing.allocator.free(b);
             fill(a, &left);
             fill(b, &right);
@@ -252,9 +259,11 @@ test "containerAnd emptying the container" {
     var out: [max_cardinality]u16 = undefined;
     for ([_]Type{ .array, .bitmap }) |dt| {
         for ([_]Type{ .array, .bitmap }) |st| {
-            const a = try testContainer(if (dt == .array) arraySize(3) else max_size, dt);
+            const a_size = if (dt == .array) arraySize(3) else max_size;
+            const a = try testContainer(a_size, dt);
             defer testing.allocator.free(a);
-            const b = try testContainer(if (st == .array) arraySize(3) else max_size, st);
+            const b_size = if (st == .array) arraySize(3) else max_size;
+            const b = try testContainer(b_size, st);
             defer testing.allocator.free(b);
             fill(a, &.{ 1, 2, 3 });
             fill(b, &.{ 4, 5, 6 });
@@ -262,9 +271,13 @@ test "containerAnd emptying the container" {
             containerAnd(a, b);
             try testing.expectEqual(@as(u32, 0), getCardinality(a));
             try testing.expectEqual(@as(usize, 0), collect(a, &out).len);
-            if (dt == .bitmap) try testing.expectEqual(@as(u32, 0), bitmap.cardinality(a));
+            if (dt == .bitmap) {
+                try testing.expectEqual(@as(u32, 0), bitmap.cardinality(a));
+            }
             // An emptied array container must not keep stale values around.
-            if (dt == .array) try testing.expectEqual(@as(u16, 0), a[start_idx]);
+            if (dt == .array) {
+                try testing.expectEqual(@as(u16, 0), a[start_idx]);
+            }
         }
     }
 }
@@ -302,9 +315,11 @@ test "containerAndNot over all four container type pairs" {
 
     for ([_]Type{ .array, .bitmap }) |dt| {
         for ([_]Type{ .array, .bitmap }) |st| {
-            const a = try testContainer(if (dt == .array) arraySize(left.len) else max_size, dt);
+            const a_size = if (dt == .array) arraySize(left.len) else max_size;
+            const a = try testContainer(a_size, dt);
             defer testing.allocator.free(a);
-            const b = try testContainer(if (st == .array) arraySize(right.len) else max_size, st);
+            const b_size = if (st == .array) arraySize(right.len) else max_size;
+            const b = try testContainer(b_size, st);
             defer testing.allocator.free(b);
             fill(a, &left);
             fill(b, &right);
@@ -331,18 +346,22 @@ test "containerOr unions in place when the destination is a bitmap" {
         const a = try testContainer(max_size, .bitmap);
         defer testing.allocator.free(a);
         // Four values: three now and one more further down.
-        const b = try testContainer(if (st == .array) arraySize(4) else max_size, st);
+        const b_size = if (st == .array) arraySize(4) else max_size;
+        const b = try testContainer(b_size, st);
         defer testing.allocator.free(b);
         fill(a, &.{ 1, 2, 65535 });
         fill(b, &.{ 2, 3, 64 });
 
-        try testing.expectEqual(@as(?[]u16, null), containerOr(a, b, buf, false));
-        try testing.expectEqualSlices(u16, &.{ 1, 2, 3, 64, 65535 }, collect(a, &out));
+        const eager = containerOr(a, b, buf, false);
+        try testing.expectEqual(@as(?[]u16, null), eager);
+        const got = collect(a, &out);
+        try testing.expectEqualSlices(u16, &.{ 1, 2, 3, 64, 65535 }, got);
         try testing.expectEqual(@as(u32, 5), getCardinality(a));
 
         // Lazy mode defers the recount to the caller.
         fill(b, &.{7});
-        try testing.expectEqual(@as(?[]u16, null), containerOr(a, b, buf, true));
+        const lazily = containerOr(a, b, buf, true);
+        try testing.expectEqual(@as(?[]u16, null), lazily);
         try testing.expectEqual(invalid_cardinality, getCardinality(a));
         recomputeCardinality(a);
         try testing.expectEqual(@as(u32, 6), getCardinality(a));
@@ -363,7 +382,8 @@ test "containerOr of two arrays keeps a free slot and grows to a bitmap" {
 
     const small = containerOr(a, b, buf, false).?;
     try testing.expectEqual(Type.array, getType(small));
-    try testing.expectEqualSlices(u16, &.{ 1, 2, 3, 5, 9 }, collect(small, &out));
+    const got = collect(small, &out);
+    try testing.expectEqualSlices(u16, &.{ 1, 2, 3, 5, 9 }, got);
     // sroar can emit an exactly full array container here (Go bug 4).
     try testing.expect(!array.isFull(small));
     try testing.expectEqual(@as(u16, 0), size(small) % 4);
@@ -408,7 +428,8 @@ test "containerOr of an array with a bitmap yields a bitmap" {
     const res = containerOr(a, b, buf, false).?;
     try testing.expectEqual(Type.bitmap, getType(res));
     try testing.expectEqual(@as(usize, max_size), res.len);
-    try testing.expectEqualSlices(u16, &.{ 1, 2, 70, 65535 }, collect(res, &out));
+    const got = collect(res, &out);
+    try testing.expectEqualSlices(u16, &.{ 1, 2, 70, 65535 }, got);
     try testing.expectEqual(@as(u32, 4), getCardinality(res));
     // The array operand is only read, never rewritten.
     try testing.expectEqual(@as(u32, 3), getCardinality(a));
@@ -431,9 +452,18 @@ test "zeroOut and arraySizeFor" {
 
     try testing.expectEqual(@as(?u16, min_size), arraySizeFor(0));
     // The last count the smallest container holds, and the first that steps up.
-    try testing.expectEqual(@as(?u16, min_size), arraySizeFor(min_size - start_idx - 1));
-    try testing.expectEqual(@as(?u16, min_size * 2), arraySizeFor(min_size - start_idx));
-    try testing.expectEqual(@as(?u16, max_array_size), arraySizeFor(max_array_values - 1));
+    try testing.expectEqual(
+        @as(?u16, min_size),
+        arraySizeFor(min_size - start_idx - 1),
+    );
+    try testing.expectEqual(
+        @as(?u16, min_size * 2),
+        arraySizeFor(min_size - start_idx),
+    );
+    try testing.expectEqual(
+        @as(?u16, max_array_size),
+        arraySizeFor(max_array_values - 1),
+    );
     // 2044 values would leave an array container exactly full.
     try testing.expectEqual(@as(?u16, null), arraySizeFor(max_array_values));
 }

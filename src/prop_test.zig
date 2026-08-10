@@ -1,5 +1,6 @@
 //! Property tests for zroar: long random operation streams and set algebra,
-//! both checked against a `std.AutoHashMapUnmanaged(u64, void)` reference model.
+//! both checked against a `std.AutoHashMapUnmanaged(u64, void)` reference
+//! model.
 //!
 //! Every seed is fixed, so a failure reproduces exactly: the test name and the
 //! seed printed with it are enough to replay the run.
@@ -13,7 +14,8 @@ const test_util = @import("test_util.zig");
 const Bitmap = zroar.Bitmap;
 const testing = std.testing;
 
-// The reference model and the helpers built on it are shared with zroar_test.zig.
+// The reference model and the helpers built on it are shared with
+// zroar_test.zig.
 const RefSet = test_util.RefSet;
 const checkInvariants = test_util.checkInvariants;
 const bitmapOf = test_util.testBitmap;
@@ -62,7 +64,8 @@ fn expectMatches(ref: *const RefSet, bm: *const Bitmap) !void {
     try testing.expectEqualSlices(u64, want, got);
 
     // toArray drains the iterator, so this only proves the two stay consistent;
-    // `contains` below is the independent check that the values are really there.
+    // `contains` below is the independent check that the values are really
+    // there.
     var seen: usize = 0;
     var it = bm.iterator();
     while (it.next()) |v| : (seen += 1) {
@@ -100,26 +103,39 @@ fn clusterBases(rnd: std.Random) [4]u64 {
 
 fn nextValue(rnd: std.Random, dist: Distribution, bases: [4]u64) u64 {
     return switch (dist) {
-        .clustered => bases[rnd.uintLessThan(usize, bases.len)] | rnd.uintLessThan(u64, 1 << 16),
+        .clustered => bases[rnd.uintLessThan(usize, bases.len)] |
+            rnd.uintLessThan(u64, 1 << 16),
         .scattered => rnd.int(u64) >> 8,
     };
 }
 
 /// A value to probe or to remove. Half the time it is one that was set at some
 /// point, so hits and misses are both common even in the scattered runs.
-fn probeValue(rnd: std.Random, dist: Distribution, bases: [4]u64, seen: []const u64) u64 {
-    if (seen.len > 0 and rnd.boolean()) return seen[rnd.uintLessThan(usize, seen.len)];
+fn probeValue(
+    rnd: std.Random,
+    dist: Distribution,
+    bases: [4]u64,
+    seen: []const u64,
+) u64 {
+    if (seen.len > 0 and rnd.boolean())
+        return seen[rnd.uintLessThan(usize, seen.len)];
     return nextValue(rnd, dist, bases);
 }
 
 /// Values from a mix of the distributions: a dense run on key 0 that crosses
 /// into a bitmap container, a spread over the four clustered bases, values from
 /// a `pool` shared by both operands, and values unique to this bitmap.
-fn mixedValues(rnd: std.Random, bases: [4]u64, pool: []const u64, out: []u64) void {
+fn mixedValues(
+    rnd: std.Random,
+    bases: [4]u64,
+    pool: []const u64,
+    out: []u64,
+) void {
     for (out) |*v| {
         v.* = switch (rnd.uintLessThan(u8, 8)) {
             0, 1, 2, 3 => rnd.uintLessThan(u64, 1 << 16),
-            4 => bases[rnd.uintLessThan(usize, bases.len)] | rnd.uintLessThan(u64, 1 << 16),
+            4 => bases[rnd.uintLessThan(usize, bases.len)] |
+                rnd.uintLessThan(u64, 1 << 16),
             5, 6 => pool[rnd.uintLessThan(usize, pool.len)],
             else => rnd.int(u64) >> 8,
         };
@@ -135,9 +151,9 @@ const checkpoint_every: usize = 2_000;
 
 /// Runs `ops` random set/contains/remove operations against both the bitmap and
 /// the reference model, checkpointing as it goes. At three of the checkpoints
-/// the bitmap is serialized and reopened, and the stream carries on mutating the
-/// reopened bitmap: two through `fromBuffer`, which borrows the buffer and must
-/// copy out the first time it grows, and one through `fromBufferCopy`.
+/// the bitmap is serialized and reopened, and the stream carries on mutating
+/// the reopened bitmap: two through `fromBuffer`, which borrows the buffer and
+/// must copy out the first time it grows, and one through `fromBufferCopy`.
 fn runOpStream(seed: u64, dist: Distribution, ops: usize) !void {
     errdefer std.debug.print(
         "\nop stream failed: seed=0x{X} dist={s}\n",
@@ -161,7 +177,7 @@ fn runOpStream(seed: u64, dist: Distribution, ops: usize) !void {
 
     // Buffers the bitmap borrowed after a mid-stream reopen. They must outlive
     // it, and they stay ours to free whether or not the bitmap copied out.
-    var borrowed: [2]?[]align(8) u8 = .{ null, null };
+    var borrowed: [2]?zroar.AlignedU8 = .{ null, null };
     defer {
         for (borrowed) |maybe| {
             if (maybe) |buf| testing.allocator.free(buf);
@@ -201,7 +217,10 @@ fn runOpStream(seed: u64, dist: Distribution, ops: usize) !void {
             borrowed[if (cp == 3) 0 else 1] = buf;
             try expectMatches(&ref, &bm);
         } else if (cp == 5) {
-            const copied = try Bitmap.fromBufferCopy(testing.allocator, bm.toBuffer());
+            const copied = try Bitmap.fromBufferCopy(
+                testing.allocator,
+                bm.toBuffer(),
+            );
             bm.deinit();
             bm = copied;
             try expectMatches(&ref, &bm);
@@ -236,8 +255,8 @@ test "fused cardinalities match the materialized operations" {
             const rnd = prng.random();
             const bases = clusterBases(rnd);
 
-            // Both operands draw from one stream, so they overlap heavily in the
-            // clustered runs and hardly at all in the scattered ones.
+            // Both operands draw from one stream, so they overlap heavily in
+            // the clustered runs and hardly at all in the scattered ones.
             const av = try testing.allocator.alloc(u64, 4_000);
             defer testing.allocator.free(av);
             const bv = try testing.allocator.alloc(u64, 4_000);
@@ -362,7 +381,14 @@ fn checkAlgebra(seed: u64, n: usize) !void {
 }
 
 test "set algebra agrees with reference sets" {
-    const seeds = [_]u64{ 0x000A_11CE, 0x0000_0B0B, 0x1234_5678, 0xFEED_FACE, 0x0000_9999, 0x0000_0002 };
+    const seeds = [_]u64{
+        0x000A_11CE,
+        0x0000_0B0B,
+        0x1234_5678,
+        0xFEED_FACE,
+        0x0000_9999,
+        0x0000_0002,
+    };
     for (seeds) |seed| try checkAlgebra(seed, 5_000);
 }
 
@@ -490,7 +516,7 @@ test "a bitmap reopened from a buffer keeps growing correctly" {
 
     // Reopen repeatedly, each time from a buffer the previous round produced,
     // so growth alternates between an owned and a borrowed buffer.
-    var buffers: [8]?[]align(8) u8 = @splat(null);
+    var buffers: [8]?zroar.AlignedU8 = @splat(null);
     defer {
         for (buffers) |maybe| {
             if (maybe) |buf| testing.allocator.free(buf);

@@ -29,19 +29,19 @@ pub const index_cardinality: usize = 2;
 pub const start_idx: usize = 4;
 
 /// Smallest array container, in u16 units, header included. The one knob that
-/// sets the whole size ladder: array containers step 8 -> 16 -> ... -> 2048 from
-/// here, and every sizing decision in the library derives from it (arraySizeFor,
-/// stepSize, expandContainer, init's key-0 container, min_buffer_bytes,
-/// fromSortedList and fastOr's pre-sizing).
+/// sets the whole size ladder: array containers step 8 -> 16 -> ... -> 2048
+/// from here, and every sizing decision in the library derives from it
+/// (arraySizeFor, stepSize, expandContainer, init's key-0 container,
+/// min_buffer_bytes, fromSortedList and fastOr's pre-sizing).
 ///
 /// The trade-off is waste against growth steps. At 8 a container costs 16 bytes
-/// and holds 4 values, so a key with a single value wastes almost nothing — the
-/// case that dominates scattered u64 data, where a serialized bitmap is mostly
-/// one-value containers. Raising it front-loads capacity: a container that will
-/// end up dense reaches its final size in fewer doublings, each of which is a
-/// scootRight over the whole tail of the buffer, at the price of that much space
-/// standing empty in every sparse container. Must be a multiple of 4 (the
-/// 8-byte alignment invariant) and larger than the 4-u16 header.
+/// and holds 4 values, so a key with a single value wastes almost nothing —
+/// the case that dominates scattered u64 data, where a serialized bitmap is
+/// mostly one-value containers. Raising it front-loads capacity: a container
+/// that will end up dense reaches its final size in fewer doublings, each of
+/// which is a scootRight over the whole tail of the buffer, at the price of
+/// that much space standing empty in every sparse container. Must be a multiple
+/// of 4 (the 8-byte alignment invariant) and larger than the 4-u16 header.
 pub const min_size: u16 = 8;
 /// An array container that would grow past this converts to a bitmap instead.
 pub const max_array_size: u16 = 2048;
@@ -190,8 +190,9 @@ pub const array = struct {
         return idx < vals.len and vals[idx] == x;
     }
 
-    /// Inserts x in sorted position. Returns true if newly added. Relies on the
-    /// free-slot invariant: a live array container always has room for one more.
+    /// Inserts x in sorted position. Returns true if newly added.
+    /// Relies on the free-slot invariant: a live array container always has
+    /// room for one more.
     pub fn add(c: []u16, x: u16) bool {
         const n: usize = getCardinality(c);
         const idx = find(c, x);
@@ -199,7 +200,8 @@ pub const array = struct {
         if (idx < n and c[off] == x) return false;
 
         assert(start_idx + n < c.len); // free-slot invariant
-        std.mem.copyBackwards(u16, c[off + 1 ..][0 .. n - idx], c[off..][0 .. n - idx]);
+        const tail = n - idx;
+        std.mem.copyBackwards(u16, c[off + 1 ..][0..tail], c[off..][0..tail]);
         c[off] = x;
         setCardinality(c, @intCast(n + 1));
         return true;
@@ -211,7 +213,8 @@ pub const array = struct {
         const off = start_idx + idx;
         if (idx >= n or c[off] != x) return false;
 
-        std.mem.copyForwards(u16, c[off..][0 .. n - idx - 1], c[off + 1 ..][0 .. n - idx - 1]);
+        const tail = n - idx - 1;
+        std.mem.copyForwards(u16, c[off..][0..tail], c[off + 1 ..][0..tail]);
         // Clear the vacated slot so the serialized buffer stays canonical.
         c[start_idx + n - 1] = 0;
         setCardinality(c, @intCast(n - 1));
@@ -250,13 +253,17 @@ pub const array = struct {
     /// cursor never overtakes the read cursor. (It contains no `@memcpy` of
     /// overlapping ranges either, unlike `union2by2` and `difference`.)
     pub fn andArray(c: []u16, other: []const u16) void {
-        const n = setutil.intersection2by2(values(c), values(other), c[start_idx..]);
+        const n = setutil.intersection2by2(
+            values(c),
+            values(other),
+            c[start_idx..],
+        );
         truncate(c, n);
     }
 
     /// c := c ∩ other, where `other` is a bitmap container. A filter over c's
-    /// own values, so the write cursor trails the read cursor and the filter can
-    /// run over c's own payload.
+    /// own values, so the write cursor trails the read cursor and the filter
+    /// can run over c's own payload.
     pub fn andBitmap(c: []u16, other: []const u16) void {
         truncate(c, andBitmapInto(c[start_idx..], c, other));
     }
@@ -274,9 +281,9 @@ pub const array = struct {
         return w;
     }
 
-    /// How many of `c`'s values the bitmap container `other` also holds: one bit
-    /// test per value of the array side, writing nothing. The counting twin of
-    /// andBitmapInto.
+    /// How many of `c`'s values the bitmap container `other` also holds: one
+    /// bit test per value of the array side, writing nothing. The counting twin
+    /// of andBitmapInto.
     pub fn andBitmapCardinality(c: []const u16, other: []const u16) u32 {
         var n: u32 = 0;
         for (values(c)) |v| n += @intFromBool(bitmap.has(other, v));
@@ -349,7 +356,8 @@ pub const array = struct {
 /// Bitmap container: 1024 u64 words, LSB-first. Value x lives in word x >> 6,
 /// bit x & 63.
 pub const bitmap = struct {
-    /// The payload viewed as u64 words. Valid only while the buffer is not grown.
+    /// The payload viewed as u64 words. Valid only while the buffer is not
+    /// grown.
     pub fn words(c: []u16) []u64 {
         assert(c.len == max_size);
         const p: [*]u64 = @ptrCast(@alignCast(c[start_idx..].ptr));
@@ -430,13 +438,13 @@ pub const bitmap = struct {
     };
 
     /// The one word loop behind every bitmap-container × bitmap-container
-    /// kernel: `x` op `y` over the whole payload, a Chunk at a time, into `dst`.
-    /// Returns the result's cardinality, or 0 when not counting.
+    /// kernel: `x` op `y` over the whole payload, a Chunk at a time, into
+    /// `dst`. Returns the result's cardinality, or 0 when not counting.
     ///
     /// An in-place kernel passes the left operand's own words as both `dst` and
-    /// `x`; nothing here reads a word after writing it, so the aliasing is safe.
-    /// Every knob is comptime, so an instantiation is the plain loop it was
-    /// hand-written as, with the store or the popcount folded away.
+    /// `x`; nothing here reads a word after writing it, so the aliasing is
+    /// safe. Every knob is comptime, so an instantiation is the plain loop it
+    /// was hand-written as, with the store or the popcount folded away.
     fn wordKernel(
         comptime k: Kernel,
         dst: if (k.store) []u64 else void,
@@ -454,9 +462,9 @@ pub const bitmap = struct {
                 .or_ => l | r,
             };
             if (k.store) dst[i..][0..lanes].* = v;
-            // @popCount of a Chunk is a @Vector(lanes, u7) — 7 bits is all one
-            // lane's count needs — so reducing it as it comes would add the
-            // lanes up in u7 and wrap at 128. Widen to u64 before reducing.
+            // @popCount of a Chunk is a @Vector(lanes, u7) — 7 bits is all
+            // one lane's count needs — so reducing it as it comes would add
+            // the lanes up in u7 and wrap at 128. Widen to u64 before reducing.
             if (k.count) card += @reduce(.Add, @as(Chunk, @popCount(v)));
         }
         return card;
@@ -472,7 +480,12 @@ pub const bitmap = struct {
     /// out := a ∩ b, all three bitmap containers. `out` is overwritten whole,
     /// header included. The out-of-place twin of andBitmap.
     pub fn andBitmapInto(out: []u16, a: []const u16, b: []const u16) void {
-        const card = wordKernel(.{ .op = .and_ }, words(out), constWords(a), constWords(b));
+        const card = wordKernel(
+            .{ .op = .and_ },
+            words(out),
+            constWords(a),
+            constWords(b),
+        );
         out[index_size] = max_size;
         setType(out, .bitmap);
         setCardinality(out, @intCast(card));
@@ -489,7 +502,8 @@ pub const bitmap = struct {
     /// b := b \ other, both bitmap containers.
     pub fn andNotBitmap(b: []u16, other: []const u16) void {
         const dst = words(b);
-        const card = wordKernel(.{ .op = .andnot }, dst, dst, constWords(other));
+        const src = constWords(other);
+        const card = wordKernel(.{ .op = .andnot }, dst, dst, src);
         setCardinality(b, @intCast(card));
     }
 
@@ -508,8 +522,8 @@ pub const bitmap = struct {
         setCardinality(b, @intCast(card));
     }
 
-    /// b := b ∩ other, where `other` is an array container. The result stays a
-    /// bitmap container: DESIGN.md rules out demoting a bitmap to an array.
+    /// b := b ∩ other, where `other` is an array container. The result stays
+    /// a bitmap container: DESIGN.md rules out demoting a bitmap to an array.
     pub fn andArray(b: []u16, other: []const u16) void {
         const vals = array.values(other);
         const w = words(b);
@@ -585,7 +599,8 @@ pub const bitmap = struct {
 // Set operations between two containers
 // ---------------------------------------------------------------------------
 
-/// dst := dst ∩ src, computed in place with no allocation and no scratch space.
+/// dst := dst ∩ src, computed in place with no allocation and no scratch
+/// space.
 ///
 /// An intersection is a subset of dst, so a two-pointer rewrite of dst never
 /// overtakes itself. (sroar instead appends a fresh container and orphans the
@@ -620,10 +635,16 @@ pub fn containerAndInto(buf: []u16, a: []const u16, b: []const u16) []u16 {
                 array.values(b),
                 buf[start_idx..],
             )),
-            .bitmap => finishArray(buf, array.andBitmapInto(buf[start_idx..], a, b)),
+            .bitmap => finishArray(
+                buf,
+                array.andBitmapInto(buf[start_idx..], a, b),
+            ),
         },
         .bitmap => switch (getType(b)) {
-            .array => finishArray(buf, array.andBitmapInto(buf[start_idx..], b, a)),
+            .array => finishArray(
+                buf,
+                array.andBitmapInto(buf[start_idx..], b, a),
+            ),
             .bitmap => blk: {
                 bitmap.andBitmapInto(buf, a, b);
                 break :blk buf;
@@ -649,11 +670,11 @@ fn finishArray(buf: []u16, n: usize) []u16 {
 /// |a ∩ b|, counted without building the intersection: nothing is written and
 /// neither container is read as anything but a `[]const u16`.
 ///
-/// The one per-container-pair kernel behind all three of `Bitmap.andCardinality`,
-/// `Bitmap.orCardinality` and `Bitmap.andNotCardinality`: a union's size is
-/// |a| + |b| - |a ∩ b| and a difference's is |a| - |a ∩ b|, both of which the
-/// containers' own headers finish off, so counting the overlap is all any of
-/// them actually has to do.
+/// The one per-container-pair kernel behind all three of
+/// `Bitmap.andCardinality`, `Bitmap.orCardinality` and
+/// `Bitmap.andNotCardinality`: a union's size is |a| + |b| - |a ∩ b| and a
+/// difference's is |a| - |a ∩ b|, both of which the containers' own headers
+/// finish off, so counting the overlap is all any of them actually has to do.
 pub fn containerAndCardinality(a: []const u16, b: []const u16) u32 {
     return switch (getType(a)) {
         .array => switch (getType(b)) {
@@ -695,16 +716,23 @@ pub fn containerAndNot(dst: []u16, src: []const u16) void {
 ///
 /// In `lazy` mode a bitmap result keeps the invalid-cardinality sentinel rather
 /// than being recounted on every step; fastOr repairs it once at the end.
-pub fn containerOr(dst: []u16, src: []const u16, buf: []u16, lazy: bool) ?[]u16 {
+pub fn containerOr(
+    dst: []u16,
+    src: []const u16,
+    buf: []u16,
+    lazy: bool,
+) ?[]u16 {
     assert(buf.len == max_size);
     switch (getType(dst)) {
         .array => switch (getType(src)) {
             .array => {
-                const combined: usize = getCardinality(dst) + getCardinality(src);
+                const combined: usize =
+                    getCardinality(dst) + getCardinality(src);
                 // DESIGN.md phrases this threshold as "combined > 4096", which
                 // comes from sroar's variable-sized array containers. Ours stop
-                // at max_array_size, so the union becomes a bitmap as soon as no
-                // array container can hold it — a stricter, reachable bound.
+                // at max_array_size, so the union becomes a bitmap as soon as
+                // no array container can hold it — a stricter, reachable
+                // bound.
                 if (arraySizeFor(combined) == null) {
                     array.toBitmapInto(buf, dst);
                     bitmap.orArray(buf, src, lazy);
@@ -712,7 +740,11 @@ pub fn containerOr(dst: []u16, src: []const u16, buf: []u16, lazy: bool) ?[]u16 
                 }
                 // The merge reads both containers, so it cannot run in place:
                 // dst's own values would be overwritten before being read.
-                const n = setutil.union2by2(array.values(dst), array.values(src), buf[start_idx..]);
+                const n = setutil.union2by2(
+                    array.values(dst),
+                    array.values(src),
+                    buf[start_idx..],
+                );
                 const sz = arraySizeFor(n).?;
                 const out = buf[0..sz];
                 @memset(out[start_idx + n ..], 0);

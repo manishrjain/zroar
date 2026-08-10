@@ -188,13 +188,13 @@ Three changes, verified by the full suite + difftest + equivalence checks:
    `SuccessiveUnion64` 23.4 s → 649 ms (r64: 596 ms). `orInPlace` is
    unchanged and documents its many-new-keys cost.
 2. **`container.min_size` is now the one adjustable sizing knob, default 8
-   u16s** (was 64). Scattered-u64 serialized size fell 360 MB → 80 MB
-   (6.55× → **1.45×** of r64), flipping --oltp-random `MixedOLTP` from 0.85×
-   to **14.6× faster** than r64. Dense datasets unchanged (as predicted).
-   Cost, measured and accepted: `BuildSer` (100k uniform-random sets, ~65
-   values/container) regressed 2.14× from extra early growth steps —
-   raise `min_size` to trade back if that pattern ever matters; sorted/bulk
-   builds are unaffected (220 µs).
+   u16s** (was 64). Scattered-u64 serialized size fell 360 MB → 80 MB (6.55×
+   → **1.45×** of r64), flipping --oltp-random `MixedOLTP` from 0.85× to
+   **14.6× faster** than r64. Dense datasets unchanged (as predicted). Cost,
+   measured and accepted: `BuildSer` (100k uniform-random sets, ~65
+   values/container) regressed 2.14× from extra early growth steps — raise
+   `min_size` to trade back if that pattern ever matters; sorted/bulk builds are
+   unaffected (220 µs).
 3. **Fused `andCardinality`/`orCardinality`/`andNotCardinality`** (count
    without materializing). All three `Successive*Cardinality64` benches now
    beat r64 on every dataset — census1881: 15.0/17.4/16.6 µs vs r64's
@@ -221,7 +221,8 @@ medians, r64 rows as machine-noise controls, ≤1.4% drift):
 - dense `--oltp` SuccessiveIntersection64: 11.05 ms → **2.73 ms (−75%)**,
   now BEATS r64's 3.70 ms; the Cardinality row 9.98 ms → **2.42 ms**, beats
   r64's 2.84 ms. The last dense-data intersection gap is closed and inverted.
-- census1881: −9.6% / −7.6%; --oltp-random: −2.1% / −4.7%; no regressions.
+- census1881: −9.6% / −7.6%; --oltp-random: −2.1% / −4.7%; no
+  regressions.
 
 The in-place aliasing contract (`andArray` writes over its own left
 operand) was re-proven for the block phase and is covered by a dedicated

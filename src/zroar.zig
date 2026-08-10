@@ -16,7 +16,8 @@ const assert = std.debug.assert;
 // costs nothing. Big-endian targets would corrupt data silently; refuse them.
 comptime {
     if (builtin.target.cpu.arch.endian() != .little)
-        @compileError("zroar's on-disk format is little-endian; big-endian targets are unsupported");
+        @compileError("zroar's on-disk format is little-endian; " ++
+            "big-endian targets are unsupported");
 }
 
 const container = @import("container.zig");
@@ -27,6 +28,14 @@ pub const Iterator = @import("iterator.zig").Iterator;
 
 /// The high 48 bits of a value select its container.
 pub const key_mask = keys_mod.key_mask;
+
+/// Slice types for zroar buffers and containers. The 8-byte alignment is a
+/// correctness requirement, not a hint: a buffer's keys node and a bitmap
+/// container's payload are both viewed as `[]u64`. The trailing number is the
+/// element width, not the alignment.
+pub const AlignedU8 = []align(8) u8;
+pub const AlignedConstU8 = []align(8) const u8;
+pub const AlignedU16 = []align(8) u16;
 
 /// Key/offset pairs a freshly initialized bitmap has room for.
 const init_num_keys: usize = 2;
@@ -45,11 +54,12 @@ const key_pair_size: usize = 8;
 /// Every bitmap has a keys node with room for at least two keys plus key 0's
 /// minimum-size container, so no valid buffer is smaller than this. Public only
 /// so the test suite can build buffers on either side of the threshold.
-pub const min_buffer_bytes: usize = 2 * (4 * (2 * init_num_keys + 2) + container.min_size);
+pub const min_buffer_bytes: usize =
+    2 * (4 * (2 * init_num_keys + 2) + container.min_size);
 
 pub const Bitmap = struct {
     /// The in-use region of the buffer, in u16 units.
-    data: []align(8) u16,
+    data: AlignedU16,
     /// Allocated capacity in u16 units. Equals data.len for a borrowed buffer.
     cap: usize,
     /// False for a buffer handed to us by `fromBuffer`; true once we own it.
@@ -169,7 +179,8 @@ pub const Bitmap = struct {
     /// once doubling would exceed the array-container ceiling.
     fn expandContainer(self: *Bitmap, offset: usize) !void {
         const sz = self.data[offset];
-        // Only array containers ever grow; bitmap containers are already maximal.
+        // Only array containers ever grow; bitmap containers are already
+        // maximal.
         assert(sz >= container.min_size and sz <= container.max_array_size);
 
         const by_size: u16 = if (sz >= container.max_array_size)
@@ -224,8 +235,8 @@ pub const Bitmap = struct {
     }
 
     /// The next array-container size up from `sz`: the ladder doubling from
-    /// container.min_size to max_array_size, and max_size beyond that, where only
-    /// a bitmap container is left.
+    /// container.min_size to max_array_size, and max_size beyond that, where
+    /// only a bitmap container is left.
     fn stepSize(sz: u16) u16 {
         var i: u16 = container.min_size;
         while (i <= container.max_array_size / 2) : (i *= 2) {
@@ -261,8 +272,8 @@ pub const Bitmap = struct {
 
         var target = stepSize(dst_size);
         while (target < container.size(src)) target = stepSize(target);
-        // containerOr only ever builds array results that an array container can
-        // hold, so the step never runs past the array ceiling.
+        // containerOr only ever builds array results that an array container
+        // can hold, so the step never runs past the array ceiling.
         assert(target <= container.max_array_size);
 
         try self.scootRight(offset + dst_size, target - dst_size);
@@ -325,7 +336,8 @@ pub const Bitmap = struct {
         switch (container.getType(c)) {
             .array => {
                 if (!container.array.add(c, lo)) return false;
-                // Restore the free-slot invariant before anyone reads the container.
+                // Restore the free-slot invariant before anyone reads the
+                // container.
                 if (container.array.isFull(c)) try self.expandContainer(offset);
                 return true;
             },
@@ -360,12 +372,14 @@ pub const Bitmap = struct {
         return total;
     }
 
-    /// True when the bitmap holds no values. Cheaper than getCardinality() == 0.
+    /// True when the bitmap holds no values. Cheaper than
+    /// getCardinality() == 0.
     pub fn isEmpty(self: *const Bitmap) bool {
         const ks = self.keys();
         var i: usize = 0;
         while (i < ks.numKeys()) : (i += 1) {
-            if (container.getCardinality(self.getContainer(ks.val(i))) > 0) return false;
+            const c = self.getContainer(ks.val(i));
+            if (container.getCardinality(c) > 0) return false;
         }
         return true;
     }
@@ -417,14 +431,18 @@ pub const Bitmap = struct {
     // Serialization
     // -----------------------------------------------------------------------
 
-    /// The bitmap's buffer, borrowed. O(1). Invalidated by any growth or deinit.
-    pub fn toBuffer(self: *const Bitmap) []align(8) const u8 {
+    /// The bitmap's buffer, borrowed. O(1). Invalidated by any growth or
+    /// deinit.
+    pub fn toBuffer(self: *const Bitmap) AlignedConstU8 {
         const p: [*]align(8) const u8 = @ptrCast(self.data.ptr);
         return p[0 .. self.data.len * 2];
     }
 
     /// An owning copy of the bitmap's buffer.
-    pub fn toBufferCopy(self: *const Bitmap, allocator: std.mem.Allocator) ![]align(8) u8 {
+    pub fn toBufferCopy(
+        self: *const Bitmap,
+        allocator: std.mem.Allocator,
+    ) !AlignedU8 {
         const src = self.toBuffer();
         const out = try allocator.alignedAlloc(u8, .@"8", src.len);
         @memcpy(out, src);
@@ -436,8 +454,9 @@ pub const Bitmap = struct {
     /// and the first growth copies out, leaving `buf` untouched from then on.
     /// `buf` must outlive the bitmap. Returns a fresh empty bitmap if `buf` is
     /// too small or oddly sized to be a bitmap at all.
-    pub fn fromBuffer(allocator: std.mem.Allocator, buf: []align(8) u8) !Bitmap {
-        if (buf.len % 2 != 0 or buf.len < min_buffer_bytes) return init(allocator);
+    pub fn fromBuffer(allocator: std.mem.Allocator, buf: AlignedU8) !Bitmap {
+        if (buf.len % 2 != 0 or buf.len < min_buffer_bytes)
+            return init(allocator);
 
         const p: [*]align(8) u16 = @ptrCast(buf.ptr);
         return .{
@@ -450,8 +469,12 @@ pub const Bitmap = struct {
 
     /// Copies `buf` into a freshly owned bitmap. Also the path for input that
     /// is not 8-byte aligned.
-    pub fn fromBufferCopy(allocator: std.mem.Allocator, buf: []const u8) !Bitmap {
-        if (buf.len % 2 != 0 or buf.len < min_buffer_bytes) return init(allocator);
+    pub fn fromBufferCopy(
+        allocator: std.mem.Allocator,
+        buf: []const u8,
+    ) !Bitmap {
+        if (buf.len % 2 != 0 or buf.len < min_buffer_bytes)
+            return init(allocator);
 
         const out = try allocator.alignedAlloc(u8, .@"8", buf.len);
         errdefer allocator.free(out);
@@ -542,14 +565,18 @@ pub const Bitmap = struct {
     /// over from `other`, and one scratch container is used for array merges.
     /// `other` must not alias self.
     ///
-    /// Every key of `other` that self does not already have is inserted one at a
-    /// time, and each insertion memmoves the tail of the keys node — O(numKeys)
-    /// per new key, so O(n²) when the operands share few keys. That is the price
-    /// of unioning *into* an existing bitmap. A caller that only wants the union
-    /// as a new bitmap should use `Or` or `fastOr`, which size the keys node for
-    /// the whole result before creating any of it.
+    /// Every key of `other` that self does not already have is inserted one at
+    /// a time, and each insertion memmoves the tail of the keys node —
+    /// O(numKeys) per new key, so O(n²) when the operands share few keys. That
+    /// is the price of unioning *into* an existing bitmap. A caller that only
+    /// wants the union as a new bitmap should use `Or` or `fastOr`, which size
+    /// the keys node for the whole result before creating any of it.
     pub fn orInPlace(self: *Bitmap, other: *const Bitmap) !void {
-        const buf = try self.allocator.alignedAlloc(u16, .@"8", container.max_size);
+        const buf = try self.allocator.alignedAlloc(
+            u16,
+            .@"8",
+            container.max_size,
+        );
         defer self.allocator.free(buf);
         try self.orWith(other, buf, false);
     }
@@ -558,7 +585,12 @@ pub const Bitmap = struct {
     /// container for the merges that cannot run in place. In `lazy` mode
     /// bitmap containers are left with an invalid cardinality, which the
     /// caller must repair before the bitmap is handed out.
-    fn orWith(self: *Bitmap, other: *const Bitmap, buf: []align(8) u16, lazy: bool) !void {
+    fn orWith(
+        self: *Bitmap,
+        other: *const Bitmap,
+        buf: AlignedU16,
+        lazy: bool,
+    ) !void {
         // Growing self would reallocate other's buffer as well if they aliased,
         // leaving the container we are copying from dangling.
         assert(self != other);
@@ -579,8 +611,10 @@ pub const Bitmap = struct {
                 continue;
             }
             const offset = ks.val(idx);
-            if (container.containerOr(self.getContainer(offset), src, buf, lazy)) |c| {
-                // The union outgrew the container; install what was built in buf.
+            const dst = self.getContainer(offset);
+            if (container.containerOr(dst, src, buf, lazy)) |c| {
+                // The union outgrew the container; install what was built
+                // in buf.
                 try self.copyAt(offset, c);
             }
         }
@@ -591,18 +625,22 @@ pub const Bitmap = struct {
     /// The cost is proportional to the *output*: a key that intersects to
     /// nothing costs one merge step and no space at all, and every container is
     /// created at the size its own result needs. So there is nothing to compact
-    /// afterwards — unlike sroar, which copies a's containers in whole only to
-    /// shrink them again and then sweeps the empties away.
-    pub fn And(allocator: std.mem.Allocator, a: *const Bitmap, b: *const Bitmap) !Bitmap {
+    /// afterwards — unlike sroar, which copies a's containers in whole only
+    /// to shrink them again and then sweeps the empties away.
+    pub fn And(
+        allocator: std.mem.Allocator,
+        a: *const Bitmap,
+        b: *const Bitmap,
+    ) !Bitmap {
         var res = try init(allocator);
         errdefer res.deinit();
-        // Room for every shared key up front: the keys below then go into a node
-        // that never grows, so no container ever has to move.
+        // Room for every shared key up front: the keys below then go into a
+        // node that never grows, so no container ever has to move.
         try res.initSpaceForKeys(countSharedKeys(a, b));
 
-        // One scratch container per call. The intersection cannot be computed in
-        // place, since neither operand may be touched, and its size is not known
-        // until it has been computed.
+        // One scratch container per call. The intersection cannot be computed
+        // in place, since neither operand may be touched, and its size is not
+        // known until it has been computed.
         var scratch: [container.max_size]u16 align(8) = undefined;
 
         const ka = a.keys();
@@ -626,7 +664,8 @@ pub const Bitmap = struct {
                 b.getContainer(kb.val(bi)),
             );
             // An empty intersection gets neither a container nor a key.
-            if (container.getCardinality(built) > 0) try res.appendResult(ak, built);
+            if (container.getCardinality(built) > 0)
+                try res.appendResult(ak, built);
             ai += 1;
             bi += 1;
         }
@@ -636,16 +675,16 @@ pub const Bitmap = struct {
     // -----------------------------------------------------------------------
     // Fused cardinalities
     //
-    // "How big would this operation's result be?" answered without producing the
-    // result: one merge walk over the two key lists, and for the keys they share
-    // `container.containerAndCardinality`, which counts an overlap in place. No
-    // allocation, so none of the three can fail, and no bitmap is built and
-    // thrown away. CRoaring offers the same three as
+    // "How big would this operation's result be?" answered without producing
+    // the result: one merge walk over the two key lists, and for the keys they
+    // share `container.containerAndCardinality`, which counts an overlap in
+    // place. No allocation, so none of the three can fail, and no bitmap is
+    // built and thrown away. CRoaring offers the same three as
     // roaring64_bitmap_{and,or,andnot}_cardinality.
     // -----------------------------------------------------------------------
 
-    /// |self ∩ other|. Keys held by only one side intersect to nothing, so only
-    /// the shared ones cost anything at all.
+    /// |self ∩ other|. Keys held by only one side intersect to nothing, so
+    /// only the shared ones cost anything at all.
     pub fn andCardinality(self: *const Bitmap, other: *const Bitmap) u64 {
         const ka = self.keys();
         const kb = other.keys();
@@ -684,15 +723,18 @@ pub const Bitmap = struct {
             const ak = ka.key(ai);
             const bk = kb.key(bi);
             if (ak < bk) {
-                total += container.getCardinality(self.getContainer(ka.val(ai)));
+                total +=
+                    container.getCardinality(self.getContainer(ka.val(ai)));
                 ai += 1;
             } else if (ak > bk) {
-                total += container.getCardinality(other.getContainer(kb.val(bi)));
+                total +=
+                    container.getCardinality(other.getContainer(kb.val(bi)));
                 bi += 1;
             } else {
                 const ca = self.getContainer(ka.val(ai));
                 const cb = other.getContainer(kb.val(bi));
-                total += container.getCardinality(ca) + container.getCardinality(cb) -
+                total += container.getCardinality(ca) +
+                    container.getCardinality(cb) -
                     container.containerAndCardinality(ca, cb);
                 ai += 1;
                 bi += 1;
@@ -720,16 +762,16 @@ pub const Bitmap = struct {
             const ak = ka.key(ai);
             const bk = kb.key(bi);
             if (ak < bk) {
-                total += container.getCardinality(self.getContainer(ka.val(ai)));
+                total +=
+                    container.getCardinality(self.getContainer(ka.val(ai)));
                 ai += 1;
             } else if (ak > bk) {
                 bi += 1;
             } else {
                 const ca = self.getContainer(ka.val(ai));
-                total += container.getCardinality(ca) - container.containerAndCardinality(
-                    ca,
-                    other.getContainer(kb.val(bi)),
-                );
+                const cb = other.getContainer(kb.val(bi));
+                total += container.getCardinality(ca) -
+                    container.containerAndCardinality(ca, cb);
                 ai += 1;
                 bi += 1;
             }
@@ -770,8 +812,8 @@ pub const Bitmap = struct {
     /// already sized for all of them, so the key insert moves nothing and the
     /// container lands at the end of the buffer.
     ///
-    /// A bitmap-shaped result small enough for an array container is written out
-    /// as an array container. That picks the shape of a container as it is
+    /// A bitmap-shaped result small enough for an array container is written
+    /// out as an array container. That picks the shape of a container as it is
     /// created; it is not the bitmap -> array demotion of an existing container
     /// that DESIGN.md rules out, since nothing here is converted.
     fn appendResult(self: *Bitmap, key: u64, built: []const u16) !void {
@@ -791,7 +833,10 @@ pub const Bitmap = struct {
         const dst = self.getContainer(offset);
         switch (container.getType(built)) {
             .array => {
-                @memcpy(dst[container.start_idx..][0..card], container.array.values(built));
+                @memcpy(
+                    dst[container.start_idx..][0..card],
+                    container.array.values(built),
+                );
                 container.setCardinality(dst, card);
             },
             .bitmap => if (sz == container.max_size)
@@ -816,16 +861,21 @@ pub const Bitmap = struct {
     /// The two-operand union is just `fastOr` of two inputs, and it has to be:
     /// unioning `a` and then `b` into a fresh bitmap inserts every key of `b`
     /// that `a` lacks one at a time, and each insertion memmoves the keys node
-    /// (see `orInPlace`). On key-disjoint operands with half a million keys each
-    /// that quadratic term dominates everything else by two orders of magnitude.
-    /// `fastOr` instead sums the per-key cardinalities of both inputs first,
-    /// builds the whole keys node in one pass, and lets each container be created
-    /// at a size its result already fits in.
+    /// (see `orInPlace`). On key-disjoint operands with half a million keys
+    /// each that quadratic term dominates everything else by two orders of
+    /// magnitude. `fastOr` instead sums the per-key cardinalities of both
+    /// inputs first, builds the whole keys node in one pass, and lets each
+    /// container be created at a size its result already fits in.
     ///
-    /// Like any `fastOr` result this one may carry a single container that no key
-    /// points at, left behind when key 0 needed a bigger container than the one
-    /// `init` gave it. That is dead space, not corruption; `cleanup` reclaims it.
-    pub fn Or(allocator: std.mem.Allocator, a: *const Bitmap, b: *const Bitmap) !Bitmap {
+    /// Like any `fastOr` result this one may carry a single container that no
+    /// key points at, left behind when key 0 needed a bigger container than the
+    /// one `init` gave it. That is dead space, not corruption; `cleanup`
+    /// reclaims it.
+    pub fn Or(
+        allocator: std.mem.Allocator,
+        a: *const Bitmap,
+        b: *const Bitmap,
+    ) !Bitmap {
         return fastOr(allocator, &.{ a, b });
     }
 
@@ -834,14 +884,19 @@ pub const Bitmap = struct {
     /// sized up front from the summed cardinalities, so no key insertion has to
     /// move the containers, and each container's cardinality is counted once at
     /// the end rather than after every input.
-    pub fn fastOr(allocator: std.mem.Allocator, bitmaps: []const *const Bitmap) !Bitmap {
+    pub fn fastOr(
+        allocator: std.mem.Allocator,
+        bitmaps: []const *const Bitmap,
+    ) !Bitmap {
         if (bitmaps.len == 0) return init(allocator);
         // sroar hands back the input itself here; the result must be the
         // caller's to own and to keep mutating, so copy it.
-        if (bitmaps.len == 1) return fromBufferCopy(allocator, bitmaps[0].toBuffer());
+        if (bitmaps.len == 1)
+            return fromBufferCopy(allocator, bitmaps[0].toBuffer());
 
-        // Every (key, cardinality) pair of every input, sorted by key and then
-        // merged. sroar uses a map here; one sort is simpler and allocates once.
+        // Every (key, cardinality) pair of every input, sorted by key and
+        // then merged. sroar uses a map here; one sort is simpler and
+        // allocates once.
         var total: usize = 0;
         for (bitmaps) |bm| total += bm.keys().numKeys();
 
@@ -854,7 +909,10 @@ pub const Bitmap = struct {
             var i: usize = 0;
             while (i < ks.numKeys()) : (i += 1) {
                 const c = bm.getContainer(ks.val(i));
-                scratch[n] = .{ .key = ks.key(i), .card = container.getCardinality(c) };
+                scratch[n] = .{
+                    .key = ks.key(i),
+                    .card = container.getCardinality(c),
+                };
                 n += 1;
             }
         }
@@ -878,7 +936,8 @@ pub const Bitmap = struct {
                 const sz = containerSizeFor(e.card);
                 if ((sz == container.max_size) != bitmap_pass) continue;
                 const offset = try dst.addContainer(e.key, sz);
-                if (bitmap_pass) container.setType(dst.getContainer(offset), .bitmap);
+                if (bitmap_pass)
+                    container.setType(dst.getContainer(offset), .bitmap);
             }
         }
 
@@ -901,7 +960,10 @@ pub const Bitmap = struct {
     /// Builds a bitmap from values in ascending order; duplicates are ignored.
     /// Much cheaper than repeated `set`: the keys node is sized in one step and
     /// every container is written once, at its final size.
-    pub fn fromSortedList(allocator: std.mem.Allocator, vals: []const u64) !Bitmap {
+    pub fn fromSortedList(
+        allocator: std.mem.Allocator,
+        vals: []const u64,
+    ) !Bitmap {
         var bm = try init(allocator);
         errdefer bm.deinit();
         if (vals.len == 0) return bm;
@@ -922,7 +984,8 @@ pub const Bitmap = struct {
             var j = i;
             var distinct: usize = 0;
             while (j < vals.len and (vals[j] & key_mask) == key) : (j += 1) {
-                assert(j == 0 or vals[j] >= vals[j - 1]); // the input must be sorted
+                // the input must be sorted
+                assert(j == 0 or vals[j] >= vals[j - 1]);
                 if (j == i or vals[j] != vals[j - 1]) distinct += 1;
             }
             try bm.fillContainer(key, vals[i..j], distinct);
@@ -933,7 +996,12 @@ pub const Bitmap = struct {
 
     /// Writes one run of `vals` — all sharing `key`, ascending, `distinct` of
     /// them unique — into a single container sized for exactly that run.
-    fn fillContainer(self: *Bitmap, key: u64, vals: []const u64, distinct: usize) !void {
+    fn fillContainer(
+        self: *Bitmap,
+        key: u64,
+        vals: []const u64,
+        distinct: usize,
+    ) !void {
         const sz = containerSizeFor(distinct);
         const offset = try self.addContainer(key, sz);
         const c = self.getContainer(offset);
@@ -1014,7 +1082,9 @@ pub const Bitmap = struct {
                 continue;
             }
             var run: usize = self.data[off];
-            while (off + run < self.data.len and self.isDeadContainer(off + run)) {
+            while (off + run < self.data.len and
+                self.isDeadContainer(off + run))
+            {
                 run += self.data[off + run];
             }
             self.scootLeft(off, run);

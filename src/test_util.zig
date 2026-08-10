@@ -39,7 +39,10 @@ pub fn checkInvariants(bm: *const Bitmap) !void {
             .array => try testing.expect(!container.array.isFull(c)),
             .bitmap => {
                 try testing.expectEqual(container.max_size, container.size(c));
-                try testing.expectEqual(container.getCardinality(c), container.bitmap.cardinality(c));
+                try testing.expectEqual(
+                    container.getCardinality(c),
+                    container.bitmap.cardinality(c),
+                );
             },
         }
     }

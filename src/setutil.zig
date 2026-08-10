@@ -108,11 +108,12 @@ const Block = @Vector(block_len, u16);
 
 /// Bit k of the result is set iff `va[k]` equals some lane of `vb`.
 ///
-/// A vector equality only ever lines lane k up with lane k, so one compare sees
-/// 8 of the 64 pairs. Rotating `vb` one lane to the left re-pairs every lane of
-/// `va` with `vb`'s next neighbour, so eight rotations — the identity plus
-/// seven — walk every lane of `vb` past every lane of `va`: all 64 pairs, none
-/// twice. Every rotation amount is comptime, so each is one fixed shuffle.
+/// A vector equality only ever lines lane k up with lane k, so one compare
+/// sees 8 of the 64 pairs. Rotating `vb` one lane to the left re-pairs
+/// every lane of `va` with `vb`'s next neighbour, so eight rotations — the
+/// identity plus seven — walk every lane of `vb` past every lane of `va`:
+/// all 64 pairs, none twice. Every rotation amount is comptime, so each is
+/// one fixed shuffle.
 fn matchAny(va: Block, vb: Block) u8 {
     var mask: u8 = @bitCast(va == vb);
     inline for (1..block_len) |r| {
@@ -195,8 +196,9 @@ fn localIntersectCore(
     return pos;
 }
 
-/// Intersection for heavily skewed inputs: each element of `smallset` is located
-/// in `largeset` by an exponential (galloping) probe instead of a linear walk.
+/// Intersection for heavily skewed inputs: each element of `smallset` is
+/// located in `largeset` by an exponential (galloping) probe instead of a
+/// linear walk.
 fn gallopingIntersectCore(
     comptime mode: Mode,
     smallset: []const u16,
@@ -236,14 +238,22 @@ fn gallopingIntersectCore(
 
 /// Writes set1 ∩ set2 into `buffer`, returns the count written.
 /// `buffer` must hold at least @min(set1.len, set2.len) elements.
-pub fn intersection2by2(set1: []const u16, set2: []const u16, buffer: []u16) usize {
+pub fn intersection2by2(
+    set1: []const u16,
+    set2: []const u16,
+    buffer: []u16,
+) usize {
     return intersectCore(.materialize, set1, set2, buffer);
 }
 
 /// Intersection for sets of similar size: the balanced-input kernel behind
-/// `intersection2by2`. Public so the test suite can exercise it directly rather
-/// than through the skew dispatcher.
-pub fn localintersect2by2(set1: []const u16, set2: []const u16, buffer: []u16) usize {
+/// `intersection2by2`. Public so the test suite can exercise it directly
+/// rather than through the skew dispatcher.
+pub fn localintersect2by2(
+    set1: []const u16,
+    set2: []const u16,
+    buffer: []u16,
+) usize {
     return localIntersectCore(.materialize, set1, set2, buffer);
 }
 
@@ -256,16 +266,22 @@ pub fn onesidedgallopingintersect2by2(
     return gallopingIntersectCore(.materialize, smallset, largeset, buffer);
 }
 
-/// Counts set1 ∩ set2 without writing it anywhere. (sroar carries this pair as
-/// dead code in setutil.go; here they are what the fused `Bitmap.andCardinality`
-/// and friends run on two array containers.)
-pub fn intersection2by2Cardinality(set1: []const u16, set2: []const u16) usize {
+/// Counts set1 ∩ set2 without writing it anywhere. (sroar carries this pair
+/// as dead code in setutil.go; here they are what the fused
+/// `Bitmap.andCardinality` and friends run on two array containers.)
+pub fn intersection2by2Cardinality(
+    set1: []const u16,
+    set2: []const u16,
+) usize {
     return intersectCore(.count, set1, set2, {});
 }
 
 /// Counting twin of `localintersect2by2`, the balanced-input kernel. Public for
 /// the same reason: so the test suite can reach it without the dispatcher.
-pub fn localintersect2by2Cardinality(set1: []const u16, set2: []const u16) usize {
+pub fn localintersect2by2Cardinality(
+    set1: []const u16,
+    set2: []const u16,
+) usize {
     return localIntersectCore(.count, set1, set2, {});
 }
 
@@ -287,7 +303,10 @@ pub fn advanceUntil(array: []const u16, pos: usize, min: u16) usize {
     while (lower + spansize < array.len and array[lower + spansize] < min) {
         spansize *= 2;
     }
-    var upper = if (lower + spansize < array.len) lower + spansize else array.len - 1;
+    var upper = if (lower + spansize < array.len)
+        lower + spansize
+    else
+        array.len - 1;
 
     if (array[upper] == min) return upper;
     if (array[upper] < min) return array.len; // no element >= min
