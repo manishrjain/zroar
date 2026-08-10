@@ -8,50 +8,24 @@
 
 const std = @import("std");
 const zroar = @import("zroar.zig");
-const container = @import("container.zig");
+const test_util = @import("test_util.zig");
 
 const Bitmap = zroar.Bitmap;
-const key_mask = zroar.key_mask;
 const testing = std.testing;
 
-/// The reference model: the set of values the bitmap is supposed to hold.
-const RefSet = std.AutoHashMapUnmanaged(u64, void);
+// The reference model and the helpers built on it are shared with zroar_test.zig.
+const RefSet = test_util.RefSet;
+const checkInvariants = test_util.checkInvariants;
+const bitmapOf = test_util.testBitmap;
+const refSetOf = test_util.testRefSet;
+const refAnd = test_util.refAnd;
+const refAndNot = test_util.refAndNot;
+const refOr = test_util.refOr;
+const expectFusedCardinalities = test_util.expectFusedCardinalities;
 
 // ---------------------------------------------------------------------------
 // Invariants and model comparison
 // ---------------------------------------------------------------------------
-
-/// The layout invariants DESIGN.md calls load-bearing. zroar.zig has the same
-/// helper for its own tests, but it is private to that file, so this is a copy
-/// written against the public `keys` and `getContainer` views.
-fn checkInvariants(bm: *const Bitmap) !void {
-    const ks = bm.keys();
-    try testing.expect(ks.size() % 4 == 0);
-    try testing.expect(ks.numKeys() >= 1);
-    try testing.expectEqual(@as(u64, 0), ks.key(0)); // key 0 always exists
-
-    var i: usize = 0;
-    while (i < ks.numKeys()) : (i += 1) {
-        if (i > 0) try testing.expect(ks.key(i) > ks.key(i - 1));
-        try testing.expectEqual(ks.key(i) & key_mask, ks.key(i));
-
-        const off = ks.val(i);
-        try testing.expectEqual(@as(usize, 0), off % 4);
-        try testing.expect(off >= ks.size());
-        try testing.expect(off < bm.data.len);
-
-        const c = bm.getContainer(off);
-        try testing.expectEqual(@as(u16, 0), container.size(c) % 4);
-        switch (container.getType(c)) {
-            // Free-slot invariant: an array container is never observed full.
-            .array => try testing.expect(!container.array.isFull(c)),
-            .bitmap => {
-                try testing.expectEqual(container.max_size, container.size(c));
-                try testing.expectEqual(container.getCardinality(c), container.bitmap.cardinality(c));
-            },
-        }
-    }
-}
 
 /// The reference set's values in ascending order. The caller owns the slice.
 fn refSorted(ref: *const RefSet) ![]u64 {
@@ -152,20 +126,6 @@ fn mixedValues(rnd: std.Random, bases: [4]u64, pool: []const u64, out: []u64) vo
     }
 }
 
-fn bitmapOf(vals: []const u64) !Bitmap {
-    var bm = try Bitmap.init(testing.allocator);
-    errdefer bm.deinit();
-    for (vals) |v| _ = try bm.set(v);
-    return bm;
-}
-
-fn refSetOf(vals: []const u64) !RefSet {
-    var ref = RefSet.empty;
-    errdefer ref.deinit(testing.allocator);
-    for (vals) |v| try ref.put(testing.allocator, v, {});
-    return ref;
-}
-
 // ---------------------------------------------------------------------------
 // Random operation streams
 // ---------------------------------------------------------------------------
@@ -262,55 +222,6 @@ test "random operation streams agree with a hashmap reference" {
 // ---------------------------------------------------------------------------
 // Set algebra
 // ---------------------------------------------------------------------------
-
-fn refAnd(a: *const RefSet, b: *const RefSet) !RefSet {
-    var out = RefSet.empty;
-    errdefer out.deinit(testing.allocator);
-    var it = a.keyIterator();
-    while (it.next()) |k| {
-        if (b.contains(k.*)) try out.put(testing.allocator, k.*, {});
-    }
-    return out;
-}
-
-fn refAndNot(a: *const RefSet, b: *const RefSet) !RefSet {
-    var out = RefSet.empty;
-    errdefer out.deinit(testing.allocator);
-    var it = a.keyIterator();
-    while (it.next()) |k| {
-        if (!b.contains(k.*)) try out.put(testing.allocator, k.*, {});
-    }
-    return out;
-}
-
-fn refOr(a: *const RefSet, b: *const RefSet) !RefSet {
-    var out = RefSet.empty;
-    errdefer out.deinit(testing.allocator);
-    for ([_]*const RefSet{ a, b }) |set| {
-        var it = set.keyIterator();
-        while (it.next()) |k| try out.put(testing.allocator, k.*, {});
-    }
-    return out;
-}
-
-/// The fused counts must equal the cardinality of the operation carried out for
-/// real: `And` for the intersection, `fastOr` for the union, and a clone put
-/// through `andNotInPlace` for the difference. None of the three is symmetric
-/// in its operands, so callers check both orders.
-fn expectFusedCardinalities(a: *const Bitmap, b: *const Bitmap) !void {
-    var and_res = try Bitmap.And(testing.allocator, a, b);
-    defer and_res.deinit();
-    try testing.expectEqual(and_res.getCardinality(), a.andCardinality(b));
-
-    var or_res = try Bitmap.fastOr(testing.allocator, &.{ a, b });
-    defer or_res.deinit();
-    try testing.expectEqual(or_res.getCardinality(), a.orCardinality(b));
-
-    var diff = try a.clone();
-    defer diff.deinit();
-    diff.andNotInPlace(b);
-    try testing.expectEqual(diff.getCardinality(), a.andNotCardinality(b));
-}
 
 test "fused cardinalities match the materialized operations" {
     const seeds = [_]u64{ 0x0000_CA4D, 0xBEEF_CA4D, 0x0FA5_CA4D };

@@ -242,12 +242,19 @@ keys node in one pre-sized pass. Clamp summed estimates at 65536.
 zroar/
 ├── DESIGN.md            (this file)
 ├── build.zig            lib module + `zig build test` + bench exe + difftest exe
-├── src/
-│   ├── zroar.zig        pub Bitmap, buffer machinery, public API, top-level tests
+├── src/                 production code carries no test blocks; tests live in
+│   │                    the *_test.zig files beside it
+│   ├── zroar.zig        pub Bitmap, buffer machinery, public API
 │   ├── keys.zig         Keys node view + search/set/updateOffsets
 │   ├── container.zig    array + bitmap container kernels, conversions
 │   ├── setutil.zig      union2by2 / intersection2by2 / gallop / difference on []u16
 │   ├── iterator.zig     forward iterator (next() ?u64)
+│   ├── tests.zig        the single test root: imports every test file below
+│   ├── test_util.zig    shared helpers (checkInvariants, builders, ref sets)
+│   ├── zroar_test.zig   \
+│   ├── container_test.zig|  unit tests, moved out of the files they cover
+│   ├── setutil_test.zig  |
+│   ├── keys_test.zig    /
 │   └── prop_test.zig    property tests vs std.AutoHashMapUnmanaged reference
 └── bench/
     ├── bench.zig        harness (idioms cloned from roaring-zig/microbench/bench.zig)
@@ -257,8 +264,10 @@ zroar/
 
 ## Testing strategy
 
-1. Unit tests colocated in each src file (`zig build test`, run in Debug and
-   ReleaseSafe): setutil merges incl. gallop threshold; container conversion
+1. Unit tests in `src/<name>_test.zig`, reached through `src/tests.zig`
+   (`zig build test`, run in Debug and ReleaseSafe): a file nothing imports
+   has its tests silently skipped, so every test file must be listed there.
+   Coverage: setutil merges incl. gallop threshold; container conversion
    at 2043/2044/2045 elements; keys-node growth under many keys; boundary
    values 0, 0xFFFF, 0x10000, 1<<48, maxInt(u64); round-trip
    `fromBuffer(toBufferCopy(bm))` bit-identical (`std.mem.eql` on u16s).

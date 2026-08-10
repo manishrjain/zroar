@@ -4,29 +4,24 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const mod = b.addModule("zroar", .{
+    // The library module, for dependents.
+    _ = b.addModule("zroar", .{
         .root_source_file = b.path("src/zroar.zig"),
         .target = target,
         .optimize = optimize,
     });
 
-    // A test build of the module compiles every file reachable from src/zroar.zig,
-    // so the `test` blocks colocated in keys.zig / container.zig / setutil.zig /
-    // iterator.zig all run from this single step.
-    const mod_tests = b.addTest(.{ .root_module = mod });
-    const run_mod_tests = b.addRunArtifact(mod_tests);
-
-    const test_step = b.step("test", "Run library tests");
-    test_step.dependOn(&run_mod_tests.step);
-
-    // Property tests import the library by file path, which re-runs the unit
-    // tests as well; the duplication is harmless and keeps one `test` step.
-    const prop_tests = b.addTest(.{ .root_module = b.createModule(.{
-        .root_source_file = b.path("src/prop_test.zig"),
+    // Every test lives in its own `*_test.zig` file, and Zig silently skips the
+    // tests in a file nothing references, so src/tests.zig imports all of them
+    // and is the single root of the test build.
+    const tests = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("src/tests.zig"),
         .target = target,
         .optimize = optimize,
     }) });
-    test_step.dependOn(&b.addRunArtifact(prop_tests).step);
+
+    const test_step = b.step("test", "Run library tests");
+    test_step.dependOn(&b.addRunArtifact(tests).step);
 
     // b.option panics if an option is declared twice, so anything shared by
     // the bench and difftest wiring is resolved exactly once, here.
