@@ -42,6 +42,11 @@ const oltp_seed = 0x0C71_9A5E;
 
 const Entry = struct { name: []const u8, func: *const fn (*const DataSet) u64 };
 
+const Measurement = struct {
+    entry: Entry,
+    ns_per_iteration: u64,
+};
+
 const benches = [_]Entry{
     .{ .name = "ColdOpen0-zroar", .func = coldOpenZroar(0) },
     .{ .name = "ColdOpen0-r64", .func = coldOpenR64(0) },
@@ -655,12 +660,89 @@ fn findPair(base: []const u8) ?Entry {
     return null;
 }
 
+fn findMeasurementPair(measurements: []const Measurement, base: []const u8) ?Measurement {
+    for (measurements) |measurement| {
+        const name = measurement.entry.name;
+        if (name.len != base.len + "-r64".len) continue;
+        if (!std.mem.startsWith(u8, name, base)) continue;
+        if (!std.mem.endsWith(u8, name, "-r64")) continue;
+        return measurement;
+    }
+    return null;
+}
+
+fn printComparison(measurements: []const Measurement, ds: *const DataSet) void {
+    var pair_count: usize = 0;
+    var zroar_wins: usize = 0;
+    var r64_wins: usize = 0;
+    var ties: usize = 0;
+    for (measurements) |zr| {
+        if (!std.mem.endsWith(u8, zr.entry.name, "-zroar")) continue;
+
+        const base = zr.entry.name[0 .. zr.entry.name.len - "-zroar".len];
+        const r64 = findMeasurementPair(measurements, base) orelse continue;
+
+        if (pair_count == 0) {
+            std.debug.print("\n", .{});
+            std.debug.print("Comparison: zroar vs CRoaring roaring64 (lower time is better)\n", .{});
+            std.debug.print("-------------------------------------------------------------------------------------------\n", .{});
+            std.debug.print("Benchmark                                      zroar            r64  Result\n", .{});
+            std.debug.print("-------------------------------------------------------------------------------------------\n", .{});
+        }
+
+        const zr_ns: f64 = @floatFromInt(zr.ns_per_iteration);
+        const r64_ns: f64 = @floatFromInt(r64.ns_per_iteration);
+        if (zr.ns_per_iteration < r64.ns_per_iteration) {
+            std.debug.print(
+                "{s:<40}{d:12} ns {d:12} ns  zroar {d:.2}x faster\n",
+                .{ base, zr.ns_per_iteration, r64.ns_per_iteration, r64_ns / zr_ns },
+            );
+            zroar_wins += 1;
+        } else if (zr.ns_per_iteration > r64.ns_per_iteration) {
+            std.debug.print(
+                "{s:<40}{d:12} ns {d:12} ns  CRoaring {d:.2}x faster\n",
+                .{ base, zr.ns_per_iteration, r64.ns_per_iteration, zr_ns / r64_ns },
+            );
+            r64_wins += 1;
+        } else {
+            std.debug.print(
+                "{s:<40}{d:12} ns {d:12} ns  tie\n",
+                .{ base, zr.ns_per_iteration, r64.ns_per_iteration },
+            );
+            ties += 1;
+        }
+        pair_count += 1;
+    }
+
+    if (pair_count == 0) return;
+
+    std.debug.print(
+        "\nBenchmark wins: zroar {d}, r64 {d}, ties {d} ({d} comparable pairs)\n",
+        .{ zroar_wins, r64_wins, ties, pair_count },
+    );
+
+    const zr_size: f64 = @floatFromInt(ds.zr_u_buf.len);
+    const r64_size: f64 = @floatFromInt(ds.r64_u_buf.len);
+    if (ds.zr_u_buf.len >= ds.r64_u_buf.len) {
+        std.debug.print(
+            "\nSerialized union: zroar {d} bytes, r64 {d} bytes (zroar {d:.2}x larger)\n",
+            .{ ds.zr_u_buf.len, ds.r64_u_buf.len, zr_size / r64_size },
+        );
+    } else {
+        std.debug.print(
+            "\nSerialized union: zroar {d} bytes, r64 {d} bytes (zroar {d:.2}x smaller)\n",
+            .{ ds.zr_u_buf.len, ds.r64_u_buf.len, r64_size / zr_size },
+        );
+    }
+}
+
 fn run(io: std.Io, ds: *const DataSet, filter: ?[]const u8) void {
     std.debug.print("---------------------------------------------------------------------\n", .{});
     std.debug.print("Benchmark                                  Time            Iterations\n", .{});
     std.debug.print("---------------------------------------------------------------------\n", .{});
 
     var matched: usize = 0;
+    var measurements: [benches.len]Measurement = undefined;
     for (benches) |b| {
         if (filter) |f| if (std.mem.indexOf(u8, b.name, f) == null) continue;
 
@@ -677,7 +759,13 @@ fn run(io: std.Io, ds: *const DataSet, filter: ?[]const u8) void {
             total_ns = @intCast(start.untilNow(io).raw.toNanoseconds());
             if (total_ns >= target_total_ns) break;
         }
-        std.debug.print("{s:<36}{d:12} ns {d:12}\n", .{ b.name, total_ns / iterations, iterations });
+        const ns_per_iteration = total_ns / iterations;
+        std.debug.print("{s:<36}{d:12} ns {d:12}\n", .{ b.name, ns_per_iteration, iterations });
+
+        measurements[matched] = .{
+            .entry = b,
+            .ns_per_iteration = ns_per_iteration,
+        };
 
         // Keeps the accumulated markers, and with them the benchmark bodies, alive.
         if (marker_sum == 0xDEADBEEFDEADBEEF) @panic("impossible");
@@ -686,6 +774,7 @@ fn run(io: std.Io, ds: *const DataSet, filter: ?[]const u8) void {
     if (filter != null and matched == 0) {
         std.debug.print("No benchmarks matched filter: '{s}'\n", .{filter.?});
     }
+    printComparison(measurements[0..matched], ds);
 }
 
 pub fn main(init: std.process.Init) !void {
