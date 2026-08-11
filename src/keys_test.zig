@@ -6,16 +6,17 @@ const keys = @import("keys.zig");
 
 const testing = std.testing;
 
-const Keys = keys.Keys;
+const Index = keys.Index;
 const index_node_start = keys.index_node_start;
 
-/// Builds a standalone node with room for `pairs` keys, as init() would.
-fn testNode(backing: []u64, pairs: usize) Keys {
-    const n = index_node_start + 2 * pairs;
+/// Builds a standalone node with room for `cap` keys, as init() would.
+fn testNode(backing: []u64, cap: usize) Index {
+    const size = keys.nodeSizeFor(cap);
+    const n = size / 4;
     @memset(backing[0..n], 0);
-    const ks = Keys{ .n = backing[0..n] };
-    ks.setNodeSize(n * 4);
-    ks.setNumKeys(0);
+    const ks = Index{ .n = backing[0..n] };
+    ks.setNodeSize(size);
+    ks.setCapacity(cap); // also declares 0 keys, over a zeroed node
     return ks;
 }
 
@@ -24,7 +25,7 @@ test "search on an empty node" {
     const ks = testNode(&backing, 4);
     try testing.expectEqual(@as(usize, 0), ks.search(0));
     try testing.expectEqual(@as(usize, 0), ks.search(1 << 32));
-    try testing.expectEqual(@as(?usize, null), ks.getValue(0));
+    try testing.expectEqual(@as(?usize, null), ks.getOffset(0));
 }
 
 test "set keeps keys sorted and search finds the lower bound" {
@@ -41,19 +42,19 @@ test "set keeps keys sorted and search finds the lower bound" {
     try testing.expectEqual(@as(u64, 1 << 16), ks.key(1));
     try testing.expectEqual(@as(u64, 2 << 16), ks.key(2));
     try testing.expectEqual(@as(u64, 3 << 16), ks.key(3));
-    try testing.expectEqual(@as(usize, 24), ks.val(0));
-    try testing.expectEqual(@as(usize, 100), ks.val(1));
-    try testing.expectEqual(@as(usize, 150), ks.val(2));
-    try testing.expectEqual(@as(usize, 200), ks.val(3));
+    try testing.expectEqual(@as(usize, 24), ks.offset(0));
+    try testing.expectEqual(@as(usize, 100), ks.offset(1));
+    try testing.expectEqual(@as(usize, 150), ks.offset(2));
+    try testing.expectEqual(@as(usize, 200), ks.offset(3));
 
     // Re-setting an existing key updates the offset and reports "not added".
     try testing.expect(!ks.set(1 << 16, 111));
-    try testing.expectEqual(@as(usize, 111), ks.val(1));
+    try testing.expectEqual(@as(usize, 111), ks.offset(1));
     try testing.expectEqual(@as(usize, 4), ks.numKeys());
 
-    try testing.expectEqual(@as(?usize, 24), ks.getValue(0x1234));
-    try testing.expectEqual(@as(?usize, 111), ks.getValue((1 << 16) | 0xFFFF));
-    try testing.expectEqual(@as(?usize, null), ks.getValue(4 << 16));
+    try testing.expectEqual(@as(?usize, 24), ks.getOffset(0x1234));
+    try testing.expectEqual(@as(?usize, 111), ks.getOffset((1 << 16) | 0xFFFF));
+    try testing.expectEqual(@as(?usize, null), ks.getOffset(4 << 16));
     try testing.expectEqual(@as(usize, 4), ks.search(4 << 16));
 }
 
@@ -75,14 +76,14 @@ test "updateOffsets shifts only offsets beyond the boundary" {
     _ = ks.set(1 << 16, 200);
     _ = ks.set(2 << 16, 300);
 
-    ks.updateOffsets(200, 64, true);
-    try testing.expectEqual(@as(usize, 100), ks.val(0));
+    ks.offsets().shiftPast(200, 64, true);
+    try testing.expectEqual(@as(usize, 100), ks.offset(0));
     try testing.expectEqual(
         @as(usize, 200),
-        ks.val(1),
+        ks.offset(1),
     ); // at the boundary: unmoved
-    try testing.expectEqual(@as(usize, 364), ks.val(2));
+    try testing.expectEqual(@as(usize, 364), ks.offset(2));
 
-    ks.updateOffsets(200, 64, false);
-    try testing.expectEqual(@as(usize, 300), ks.val(2));
+    ks.offsets().shiftPast(200, 64, false);
+    try testing.expectEqual(@as(usize, 300), ks.offset(2));
 }

@@ -27,7 +27,7 @@ pub fn checkInvariants(bm: *const Bitmap) !void {
         if (i > 0) try testing.expect(ks.key(i) > ks.key(i - 1));
         try testing.expectEqual(ks.key(i) & key_mask, ks.key(i));
 
-        const off = ks.val(i);
+        const off = ks.offset(i);
         try testing.expectEqual(@as(usize, 0), off % 4);
         try testing.expect(off >= ks.size());
         try testing.expect(off < bm.data.len);

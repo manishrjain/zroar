@@ -23,7 +23,7 @@ comptime {
 const container = @import("container.zig");
 const keys_mod = @import("keys.zig");
 
-pub const Keys = keys_mod.Keys;
+pub const Index = keys_mod.Index;
 pub const Iterator = @import("iterator.zig").Iterator;
 
 /// The high 48 bits of a value select its container.
@@ -53,17 +53,16 @@ pub const max_node_growth: usize = 65532;
 /// suite can assert the bound without restating the number.
 pub const max_dead_divisor: usize = 4;
 
-/// The keys node header (node size, number of keys), in u16 units.
-const node_header_size: usize = keys_mod.index_node_start * 4;
-
-/// One (key, offset) pair of the keys node, in u16 units.
-const key_pair_size: usize = 8;
+/// The most keys one growth step may add. Derived from `max_node_growth` and
+/// rounded to a whole number of capacity steps.
+const max_key_growth: usize =
+    (max_node_growth / 6) / keys_mod.cap_step * keys_mod.cap_step;
 
 /// Every bitmap has a keys node with room for at least two keys plus key 0's
 /// minimum-size container, so no valid buffer is smaller than this. Public only
 /// so the test suite can build buffers on either side of the threshold.
 pub const min_buffer_bytes: usize =
-    2 * (4 * (2 * init_num_keys + 2) + container.min_size);
+    2 * (keys_mod.nodeSizeFor(init_num_keys) + container.min_size);
 
 pub const Bitmap = struct {
     /// The in-use region of the buffer, in u16 units.
@@ -89,8 +88,9 @@ pub const Bitmap = struct {
 
     fn initWithKeys(allocator: std.mem.Allocator, num_keys: usize) !Bitmap {
         assert(num_keys >= 2);
-        // Two u64s of node header plus a (key, offset) pair per key.
-        const node_size = 4 * (2 * num_keys + 2);
+        const step = keys_mod.cap_step;
+        const key_cap = std.mem.alignForward(usize, num_keys, step);
+        const node_size = keys_mod.nodeSizeFor(key_cap);
         const cap = node_size + container.min_size;
 
         const buf = try allocator.alignedAlloc(u16, .@"8", cap);
@@ -103,6 +103,7 @@ pub const Bitmap = struct {
             .allocator = allocator,
         };
         bm.setNodeSize(node_size);
+        bm.keys().setMaxKeys(key_cap);
 
         // Key 0 always exists: a zeroed key slot and a legitimate zero key are
         // otherwise indistinguishable. Nothing may ever remove it.
@@ -110,8 +111,27 @@ pub const Bitmap = struct {
         const ks = bm.keys();
         ks.setNumKeys(1);
         ks.setKeyAt(0, 0);
-        ks.setValAt(0, offset);
+        ks.setOffsetAt(0, offset);
         return bm;
+    }
+
+    /// Widens the keys node to hold `key_cap` keys, moving every container
+    /// right to make room and repointing every offset at where it now lives.
+    fn growNodeTo(self: *Bitmap, key_cap: usize) !void {
+        const cur_size = self.keys().size();
+        const new_size = keys_mod.nodeSizeFor(key_cap);
+        assert(new_size >= cur_size);
+        const by_size = new_size - cur_size;
+        if (by_size == 0) return;
+
+        try self.scootRight(cur_size, by_size);
+        self.setNodeSize(new_size);
+        // Widening moves the offsets to their new home before anything reads
+        // one through the new capacity.
+        self.keys().setCapacity(key_cap);
+        // Not shiftPast: the first container sat exactly at cur_size and did
+        // move, so every offset shifts, not just those strictly beyond.
+        self.keys().offsets().shiftAll(by_size, true);
     }
 
     // -----------------------------------------------------------------------
@@ -120,7 +140,7 @@ pub const Bitmap = struct {
 
     /// Internal: a view of the keys node. Never hold one across a call that can
     /// grow the buffer — growth reallocates and the view dangles.
-    pub fn keys(self: *const Bitmap) Keys {
+    pub fn keys(self: *const Bitmap) Index {
         const p: [*]u64 = @ptrCast(self.data.ptr);
         const node_size: usize = @intCast(p[0]);
         assert(node_size % 4 == 0);
@@ -157,7 +177,7 @@ pub const Bitmap = struct {
 
     /// Opens a zeroed hole of `by_size` u16s at `offset`, growing the buffer to
     /// suit. Container-unaware: the caller fixes up affected offsets via
-    /// `Keys.updateOffsets`. Passing `data.len` scoots nothing and so is a
+    /// `OffsetBox.shiftPast`. Passing `data.len` scoots nothing and so is a
     /// plain append, which is how a new container is added.
     ///
     /// Modelled on std.array_list.addManyAt, for its two reasons. Growth tries
@@ -280,20 +300,10 @@ pub const Bitmap = struct {
         if (!self.keys().set(key, offset)) return offset; // key already present
         if (!self.keys().isFull()) return offset;
 
-        const cur_size = self.keys().n.len * 4; // u64 -> u16
-        const by_size = @min(cur_size, max_node_growth);
-
-        try self.scootRight(cur_size, by_size);
-        self.setNodeSize(cur_size + by_size);
-
-        // Not updateOffsets: the first container sits exactly at cur_size and
-        // did move, so every offset shifts, not just those strictly beyond.
-        const ks = self.keys();
-        var i: usize = 0;
-        while (i < ks.numKeys()) : (i += 1) {
-            ks.setValAt(i, ks.val(i) + by_size);
-        }
-        return offset + by_size;
+        const old_cap = self.keys().maxKeys();
+        const before = self.keys().size();
+        try self.growNodeTo(old_cap + @min(old_cap, max_key_growth));
+        return offset + (self.keys().size() - before);
     }
 
     /// Closes the hole of `by_size` u16s at `offset` by shifting the tail left.
@@ -379,16 +389,10 @@ pub const Bitmap = struct {
     /// again. Port of sroar's initSpaceForKeys.
     fn initSpaceForKeys(self: *Bitmap, n: usize) !void {
         if (n == 0) return;
-        const cur_size = self.keys().size();
-        const by_size = n * key_pair_size;
-
-        try self.scootRight(cur_size, by_size);
-        self.setNodeSize(cur_size + by_size);
-
-        // Every container sat beyond the node, so every offset shifts.
-        const ks = self.keys();
-        var i: usize = 0;
-        while (i < ks.numKeys()) : (i += 1) ks.setValAt(i, ks.val(i) + by_size);
+        const want = self.keys().maxKeys() + n;
+        try self.growNodeTo(
+            std.mem.alignForward(usize, want, keys_mod.cap_step),
+        );
     }
 
     /// Reserves a container of at least `sz` u16s for `key` and returns its
@@ -400,7 +404,7 @@ pub const Bitmap = struct {
     /// of leaving it behind as dead space.
     fn addContainer(self: *Bitmap, key: u64, sz: u16) !usize {
         if (key == 0 and sz < container.max_size) {
-            const offset = self.keys().val(0);
+            const offset = self.keys().offset(0);
             const c = self.getContainer(offset);
             if (container.getType(c) == .array and
                 container.getCardinality(c) == 0 and
@@ -419,7 +423,7 @@ pub const Bitmap = struct {
         const key = x & key_mask;
         const lo: u16 = @truncate(x);
 
-        const offset = self.keys().getValue(key) orelse blk: {
+        const offset = self.keys().getOffset(key) orelse blk: {
             const fresh = try self.newContainer(container.min_size);
             break :blk try self.setKey(key, fresh);
         };
@@ -440,13 +444,13 @@ pub const Bitmap = struct {
 
     /// Reports whether x is present.
     pub fn contains(self: *const Bitmap, x: u64) bool {
-        const offset = self.keys().getValue(x & key_mask) orelse return false;
+        const offset = self.keys().getOffset(x & key_mask) orelse return false;
         return container.has(self.getContainer(offset), @truncate(x));
     }
 
     /// Removes x. Returns true if it was present. Never shrinks the buffer.
     pub fn remove(self: *Bitmap, x: u64) bool {
-        const offset = self.keys().getValue(x & key_mask) orelse return false;
+        const offset = self.keys().getOffset(x & key_mask) orelse return false;
         return container.remove(self.getContainer(offset), @truncate(x));
     }
 
@@ -460,7 +464,7 @@ pub const Bitmap = struct {
         var total: u64 = 0;
         var i: usize = 0;
         while (i < ks.numKeys()) : (i += 1) {
-            total += container.getCardinality(self.getContainer(ks.val(i)));
+            total += container.getCardinality(self.getContainer(ks.offset(i)));
         }
         return total;
     }
@@ -471,7 +475,7 @@ pub const Bitmap = struct {
         const ks = self.keys();
         var i: usize = 0;
         while (i < ks.numKeys()) : (i += 1) {
-            const c = self.getContainer(ks.val(i));
+            const c = self.getContainer(ks.offset(i));
             if (container.getCardinality(c) > 0) return false;
         }
         return true;
@@ -482,7 +486,7 @@ pub const Bitmap = struct {
         const ks = self.keys();
         var i: usize = 0;
         while (i < ks.numKeys()) : (i += 1) {
-            const c = self.getContainer(ks.val(i));
+            const c = self.getContainer(ks.offset(i));
             // Emptied containers are kept in place until cleanup, so skip them.
             if (container.getCardinality(c) == 0) continue;
             return ks.key(i) | container.minimum(c);
@@ -496,7 +500,7 @@ pub const Bitmap = struct {
         var i = ks.numKeys();
         while (i > 0) {
             i -= 1;
-            const c = self.getContainer(ks.val(i));
+            const c = self.getContainer(ks.offset(i));
             if (container.getCardinality(c) == 0) continue;
             return ks.key(i) | container.maximum(c);
         }
@@ -610,13 +614,13 @@ pub const Bitmap = struct {
             const bk = kb.key(bi);
             if (ak == bk) {
                 container.containerAnd(
-                    self.getContainer(ka.val(ai)),
-                    other.getContainer(kb.val(bi)),
+                    self.getContainer(ka.offset(ai)),
+                    other.getContainer(kb.offset(bi)),
                 );
                 ai += 1;
                 bi += 1;
             } else if (ak < bk) {
-                container.zeroOut(self.getContainer(ka.val(ai)));
+                container.zeroOut(self.getContainer(ka.offset(ai)));
                 ai += 1;
             } else {
                 bi += 1;
@@ -624,7 +628,7 @@ pub const Bitmap = struct {
         }
         // Keys past the end of `other` have nothing to intersect with.
         while (ai < ka.numKeys()) : (ai += 1) {
-            container.zeroOut(self.getContainer(ka.val(ai)));
+            container.zeroOut(self.getContainer(ka.offset(ai)));
         }
     }
 
@@ -641,8 +645,8 @@ pub const Bitmap = struct {
             const bk = kb.key(bi);
             if (ak == bk) {
                 container.containerAndNot(
-                    self.getContainer(ka.val(ai)),
-                    other.getContainer(kb.val(bi)),
+                    self.getContainer(ka.offset(ai)),
+                    other.getContainer(kb.offset(bi)),
                 );
                 ai += 1;
                 bi += 1;
@@ -691,7 +695,7 @@ pub const Bitmap = struct {
         var si: usize = 0;
         while (si < other.keys().numKeys()) : (si += 1) {
             const kb = other.keys();
-            const src = other.getContainer(kb.val(si));
+            const src = other.getContainer(kb.offset(si));
             if (container.getCardinality(src) == 0) continue;
             const key = kb.key(si);
 
@@ -703,7 +707,7 @@ pub const Bitmap = struct {
                 try self.copyAt(key, offset, src);
                 continue;
             }
-            const offset = ks.val(idx);
+            const offset = ks.offset(idx);
             const dst = self.getContainer(offset);
             if (container.containerOr(dst, src, buf, lazy)) |c| {
                 // The union outgrew the container; install what was built
@@ -753,8 +757,8 @@ pub const Bitmap = struct {
             }
             const built = container.containerAndInto(
                 &scratch,
-                a.getContainer(ka.val(ai)),
-                b.getContainer(kb.val(bi)),
+                a.getContainer(ka.offset(ai)),
+                b.getContainer(kb.offset(bi)),
             );
             // An empty intersection gets neither a container nor a key.
             if (container.getCardinality(built) > 0)
@@ -793,8 +797,8 @@ pub const Bitmap = struct {
                 bi += 1;
             } else {
                 total += container.containerAndCardinality(
-                    self.getContainer(ka.val(ai)),
-                    other.getContainer(kb.val(bi)),
+                    self.getContainer(ka.offset(ai)),
+                    other.getContainer(kb.offset(bi)),
                 );
                 ai += 1;
                 bi += 1;
@@ -817,15 +821,15 @@ pub const Bitmap = struct {
             const bk = kb.key(bi);
             if (ak < bk) {
                 total +=
-                    container.getCardinality(self.getContainer(ka.val(ai)));
+                    container.getCardinality(self.getContainer(ka.offset(ai)));
                 ai += 1;
             } else if (ak > bk) {
                 total +=
-                    container.getCardinality(other.getContainer(kb.val(bi)));
+                    container.getCardinality(other.getContainer(kb.offset(bi)));
                 bi += 1;
             } else {
-                const ca = self.getContainer(ka.val(ai));
-                const cb = other.getContainer(kb.val(bi));
+                const ca = self.getContainer(ka.offset(ai));
+                const cb = other.getContainer(kb.offset(bi));
                 total += container.getCardinality(ca) +
                     container.getCardinality(cb) -
                     container.containerAndCardinality(ca, cb);
@@ -835,10 +839,11 @@ pub const Bitmap = struct {
         }
         // Whatever is left on either side belongs to the union whole.
         while (ai < ka.numKeys()) : (ai += 1) {
-            total += container.getCardinality(self.getContainer(ka.val(ai)));
+            total += container.getCardinality(self.getContainer(ka.offset(ai)));
         }
         while (bi < kb.numKeys()) : (bi += 1) {
-            total += container.getCardinality(other.getContainer(kb.val(bi)));
+            const cb = other.getContainer(kb.offset(bi));
+            total += container.getCardinality(cb);
         }
         return total;
     }
@@ -856,13 +861,13 @@ pub const Bitmap = struct {
             const bk = kb.key(bi);
             if (ak < bk) {
                 total +=
-                    container.getCardinality(self.getContainer(ka.val(ai)));
+                    container.getCardinality(self.getContainer(ka.offset(ai)));
                 ai += 1;
             } else if (ak > bk) {
                 bi += 1;
             } else {
-                const ca = self.getContainer(ka.val(ai));
-                const cb = other.getContainer(kb.val(bi));
+                const ca = self.getContainer(ka.offset(ai));
+                const cb = other.getContainer(kb.offset(bi));
                 total += container.getCardinality(ca) -
                     container.containerAndCardinality(ca, cb);
                 ai += 1;
@@ -871,7 +876,7 @@ pub const Bitmap = struct {
         }
         // Keys past the end of `other` have nothing subtracted from them.
         while (ai < ka.numKeys()) : (ai += 1) {
-            total += container.getCardinality(self.getContainer(ka.val(ai)));
+            total += container.getCardinality(self.getContainer(ka.offset(ai)));
         }
         return total;
     }
@@ -918,7 +923,7 @@ pub const Bitmap = struct {
         // appending a second and orphaning the first. Key 0 is in every bitmap,
         // hence always the first key handled and still last in the buffer.
         const offset = if (key == 0) blk: {
-            const off = self.keys().val(0);
+            const off = self.keys().offset(0);
             try self.growContainerTo(off, sz);
             break :blk off;
         } else try self.setKey(key, try self.newContainer(sz));
@@ -945,7 +950,7 @@ pub const Bitmap = struct {
         const cur = self.data[offset];
         if (cur >= sz) return;
         try self.scootRight(offset + cur, sz - cur);
-        self.keys().updateOffsets(offset, sz - cur, true);
+        self.keys().offsets().shiftPast(offset, sz - cur, true);
         self.data[offset] = sz;
     }
 
@@ -1001,7 +1006,7 @@ pub const Bitmap = struct {
             const ks = bm.keys();
             var i: usize = 0;
             while (i < ks.numKeys()) : (i += 1) {
-                const c = bm.getContainer(ks.val(i));
+                const c = bm.getContainer(ks.offset(i));
                 scratch[n] = .{
                     .key = ks.key(i),
                     .card = container.getCardinality(c),
@@ -1042,7 +1047,7 @@ pub const Bitmap = struct {
         const ks = dst.keys();
         var i: usize = 0;
         while (i < ks.numKeys()) : (i += 1) {
-            const c = dst.getContainer(ks.val(i));
+            const c = dst.getContainer(ks.offset(i));
             if (container.getCardinality(c) == container.invalid_cardinality) {
                 container.recomputeCardinality(c);
             }
@@ -1141,30 +1146,38 @@ pub const Bitmap = struct {
         var w: usize = 1; // key 0 stays, empty or not
         var i: usize = 1;
         while (i < ks.numKeys()) : (i += 1) {
-            const off = ks.val(i);
+            const off = ks.offset(i);
             if (container.getCardinality(self.getContainer(off)) == 0) continue;
             ks.setKeyAt(w, ks.key(i));
-            ks.setValAt(w, off);
+            ks.setOffsetAt(w, off);
             w += 1;
         }
         const removed = ks.numKeys() - w;
         if (removed == 0) return;
-
-        const by_size = removed * key_pair_size;
-        const new_size = ks.size() - by_size;
         ks.setNumKeys(w);
-        // Clear the pair slots that are spare capacity now, keeping the buffer
-        // canonical, then drop the tail of the node the pairs no longer need.
-        @memset(self.data[node_header_size + key_pair_size * w .. new_size], 0);
+
+        // Give back the capacity the removed keys held, rounded to a whole
+        // capacity step, so the node keeps the spare slots it had before.
+        const old_cap = ks.maxKeys();
+        const new_cap = std.mem.alignForward(
+            usize,
+            old_cap - removed,
+            keys_mod.cap_step,
+        );
+        if (new_cap == old_cap) return;
+
+        const new_size = keys_mod.nodeSizeFor(new_cap);
+        const by_size = ks.size() - new_size;
+        // Narrowing pulls the offsets back, so it happens while the node is
+        // still the wider of the two; it also clears the freed slots, keeping
+        // the buffer canonical.
+        ks.setCapacity(new_cap);
         self.setNodeSize(new_size);
+        // Drop the tail of the node the removed keys no longer need.
         self.scootLeft(new_size, by_size);
 
         // Every container sat beyond the node, so every offset moved.
-        const shrunk = self.keys();
-        var k: usize = 0;
-        while (k < shrunk.numKeys()) : (k += 1) {
-            shrunk.setValAt(k, shrunk.val(k) - by_size);
-        }
+        self.keys().offsets().shiftAll(by_size, false);
     }
 
     /// Removes every empty container no key points at any more, merging
@@ -1183,7 +1196,7 @@ pub const Bitmap = struct {
                 run += self.data[off + run];
             }
             self.scootLeft(off, run);
-            self.keys().updateOffsets(off + run - 1, run, false);
+            self.keys().offsets().shiftPast(off + run - 1, run, false);
             // `off` now holds the container that followed the hole.
         }
     }
@@ -1191,7 +1204,7 @@ pub const Bitmap = struct {
     fn isDeadContainer(self: *const Bitmap, off: usize) bool {
         // Key 0's container is kept even when empty: the key must not go, and
         // a key without a container is not representable.
-        if (off == self.keys().val(0)) return false;
+        if (off == self.keys().offset(0)) return false;
         return container.getCardinality(self.getContainer(off)) == 0;
     }
 };

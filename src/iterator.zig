@@ -40,7 +40,7 @@ pub const Iterator = struct {
         const ks = it.bm.keys();
         while (it.key_idx < ks.numKeys()) {
             const key = ks.key(it.key_idx);
-            const c = it.bm.getContainer(ks.val(it.key_idx));
+            const c = it.bm.getContainer(ks.offset(it.key_idx));
             switch (container.getType(c)) {
                 .array => {
                     const vals = container.array.values(c);
@@ -77,7 +77,7 @@ pub const Iterator = struct {
 
         const ks = it.bm.keys();
         if (it.key_idx >= ks.numKeys()) return;
-        const c = it.bm.getContainer(ks.val(it.key_idx));
+        const c = it.bm.getContainer(ks.offset(it.key_idx));
         if (container.getType(c) == .bitmap) {
             it.word = container.bitmap.constWords(c)[0];
         }

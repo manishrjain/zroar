@@ -5,6 +5,7 @@
 const std = @import("std");
 const zroar = @import("zroar.zig");
 const container = @import("container.zig");
+const keys_mod = @import("keys.zig");
 const test_util = @import("test_util.zig");
 
 const Bitmap = zroar.Bitmap;
@@ -25,7 +26,7 @@ const expectFusedAgree = test_util.expectFusedCardinalities;
 
 /// Type of the container holding `x`'s key. Test-only introspection.
 fn containerTypeOf(bm: *const Bitmap, x: u64) container.Type {
-    const offset = bm.keys().getValue(x & key_mask).?;
+    const offset = bm.keys().getOffset(x & key_mask).?;
     return container.getType(bm.getContainer(offset));
 }
 
@@ -226,7 +227,7 @@ test "a container walks the whole size ladder one value at a time" {
         // the neighbour still resolves
         try testing.expect(bm.contains(1 << 32));
 
-        const c = bm.getContainer(bm.keys().val(0));
+        const c = bm.getContainer(bm.keys().offset(0));
         try seen_sizes.put(testing.allocator, container.size(c), {});
 
         // Every value set so far is still there, wherever the container moved.
@@ -254,12 +255,12 @@ test "the smallest container fills and expands at exactly its capacity" {
     var i: u64 = 0;
     while (i + 1 < capacity) : (i += 1) {
         _ = try bm.set(i);
-        const c = bm.getContainer(bm.keys().val(0));
+        const c = bm.getContainer(bm.keys().offset(0));
         try testing.expectEqual(container.min_size, container.size(c));
         try checkInvariants(&bm);
     }
     _ = try bm.set(i);
-    const grown = bm.getContainer(bm.keys().val(0));
+    const grown = bm.getContainer(bm.keys().offset(0));
     try testing.expectEqual(container.min_size * 2, container.size(grown));
     try testing.expectEqual(@as(u64, capacity), bm.getCardinality());
     try checkInvariants(&bm);
@@ -269,17 +270,20 @@ test "keys-node growth past the doubling cap stays 8-byte aligned" {
     var bm = try Bitmap.init(testing.allocator);
     defer bm.deinit();
 
-    // The node doubles 24, 48, ... 98304 u16s; the step beyond that is capped
-    // at max_node_growth. 98304 u16s is 12287 key/offset pairs, so one more
-    // key than that exercises the capped path.
-    const num_keys = 12_400;
+    // Capacity doubles 2, 4, ... 16384 keys; the step beyond that would add
+    // another 16384, which costs more than max_node_growth u16s, so it is
+    // capped at the 10922 keys that fit in exactly that many. Asking for more
+    // than 16384 keys is what exercises the capped path.
+    const num_keys = 20_000;
     var k: u64 = 0;
     while (k < num_keys) : (k += 1) _ = try bm.set(k << 16);
 
     try testing.expectEqual(@as(usize, num_keys), bm.keys().numKeys());
-    // Uncapped doubling would have produced 196608 u16s here.
+    try testing.expectEqual(@as(usize, 27_306), bm.keys().maxKeys());
+    // The capped step grew the node by exactly max_node_growth u16s, and
+    // uncapped doubling would have produced 196616 u16s instead.
     try testing.expectEqual(
-        @as(usize, 98304 + max_node_growth),
+        @as(usize, keys_mod.nodeSizeFor(16_384) + max_node_growth),
         bm.keys().size(),
     );
     try checkInvariants(&bm);
@@ -324,8 +328,8 @@ test "growing a mid-buffer container relocates it to the end" {
     // A second key puts its container behind key 0's, so growing key 0's
     // container can no longer be an append.
     _ = try bm.set(1 << 16);
-    const behind = bm.keys().getValue(1 << 16).?;
-    try testing.expect(bm.keys().getValue(0).? < behind);
+    const behind = bm.keys().getOffset(1 << 16).?;
+    try testing.expect(bm.keys().getOffset(0).? < behind);
 
     // Fill key 0's container to capacity; the expansion must move it past
     // the other container rather than shift that container right.
@@ -334,7 +338,7 @@ test "growing a mid-buffer container relocates it to the end" {
     while (i < capacity) : (i += 1) _ = try bm.set(i);
 
     try testing.expect(
-        bm.keys().getValue(0).? > bm.keys().getValue(1 << 16).?,
+        bm.keys().getOffset(0).? > bm.keys().getOffset(1 << 16).?,
     );
     try testing.expect(bm.dead > 0);
     try checkInvariants(&bm);
@@ -360,7 +364,7 @@ test "a mid-buffer array converts to bitmap by relocating" {
 
     try testing.expectEqual(container.Type.bitmap, containerTypeOf(&bm, 0));
     try testing.expect(
-        bm.keys().getValue(0).? > bm.keys().getValue(1 << 16).?,
+        bm.keys().getOffset(0).? > bm.keys().getOffset(1 << 16).?,
     );
     try checkInvariants(&bm);
 
@@ -865,7 +869,8 @@ fn expectAndIsCompact(bm: *const Bitmap) !void {
     var i: usize = 0;
     while (off < bm.data.len) : (i += 1) {
         try testing.expect(i < ks.numKeys());
-        try testing.expectEqual(off, ks.val(i)); // no container without a key
+        // No container without a key pointing at it.
+        try testing.expectEqual(off, ks.offset(i));
         const c = bm.getContainer(off);
         if (i > 0) try testing.expect(container.getCardinality(c) > 0);
         off += container.size(c);
@@ -894,7 +899,7 @@ test "And sizes each result container to the result" {
     defer got.deinit();
     try testing.expectEqual(@as(u64, 2043), got.getCardinality());
     try testing.expectEqual(container.Type.array, containerTypeOf(&got, 0));
-    const got_c = got.getContainer(got.keys().val(0));
+    const got_c = got.getContainer(got.keys().offset(0));
     try testing.expectEqual(@as(u16, 2048), container.size(got_c));
     try testing.expectEqual(@as(?u64, 2957), got.minimum());
     try testing.expectEqual(@as(?u64, 4999), got.maximum());
@@ -920,7 +925,7 @@ test "And sizes each result container to the result" {
     var got3 = try Bitmap.And(testing.allocator, &a, &sparse);
     defer got3.deinit();
     try testing.expectEqual(@as(u64, 3), got3.getCardinality());
-    const got3_c = got3.getContainer(got3.keys().val(0));
+    const got3_c = got3.getContainer(got3.keys().offset(0));
     try testing.expectEqual(container.min_size, container.size(got3_c));
     // key 1<<40 dropped
     try testing.expectEqual(@as(usize, 1), got3.keys().numKeys());
