@@ -507,12 +507,68 @@ pub const Bitmap = struct {
     pub fn toArray(self: *const Bitmap, allocator: std.mem.Allocator) ![]u64 {
         const out = try allocator.alloc(u64, @intCast(self.getCardinality()));
         errdefer allocator.free(out);
-
-        var it = self.iterator();
-        var i: usize = 0;
-        while (it.next()) |v| : (i += 1) out[i] = v;
-        assert(i == out.len);
+        self.toArrayInto(out);
         return out;
+    }
+
+    /// Writes every value into `out`, which must be exactly `getCardinality()`
+    /// long. For a caller that materializes repeatedly, this avoids the
+    /// allocation `toArray` makes, and the buffer can be reused.
+    ///
+    /// Deliberately not a drain of `iterator()`. The iterator has to be able to
+    /// stop after any single value, so it re-derives the keys view, re-reads
+    /// the key and offset, re-slices the container and re-dispatches on its
+    /// type for *every* value it returns. Hoisting that out of the inner loop
+    /// leaves an array container as a widening copy and a bitmap container as a
+    /// `@ctz` walk, which is where the time goes.
+    pub fn toArrayInto(self: *const Bitmap, out: []u64) void {
+        const ks = self.keys();
+        const num_keys = ks.numKeys();
+        var i: usize = 0;
+        var ki: usize = 0;
+        while (ki < num_keys) : (ki += 1) {
+            const key = ks.key(ki);
+            const c = self.getContainer(ks.val(ki));
+            switch (container.getType(c)) {
+                .array => {
+                    // Widened explicitly rather than left to the optimizer.
+                    // The scalar form compiles to a scalar unrolled loop: LLVM
+                    // cannot rule out `out` overlapping the container it is
+                    // reading, and Zig has no equivalent of the C strict
+                    // aliasing rule that lets CRoaring vectorize the same loop.
+                    // Spelling it out costs a few lines and roughly halves the
+                    // time, and array containers hold most of the values in
+                    // sparse data.
+                    const vals = container.array.values(c);
+                    const lanes = 8;
+                    const V16 = @Vector(lanes, u16);
+                    const V64 = @Vector(lanes, u64);
+                    const key_vec: V64 = @splat(key);
+                    var j: usize = 0;
+                    while (j + lanes <= vals.len) : (j += lanes) {
+                        const v: V16 = vals[j..][0..lanes].*;
+                        out[i..][0..lanes].* = @as(V64, v) | key_vec;
+                        i += lanes;
+                    }
+                    while (j < vals.len) : (j += 1) {
+                        out[i] = key | @as(u64, vals[j]);
+                        i += 1;
+                    }
+                },
+                .bitmap => {
+                    for (container.bitmap.constWords(c), 0..) |word, wi| {
+                        var w = word;
+                        const base = key | @as(u64, wi) * 64;
+                        while (w != 0) {
+                            out[i] = base | @ctz(w);
+                            i += 1;
+                            w &= w - 1; // clear the lowest set bit
+                        }
+                    }
+                },
+            }
+        }
+        assert(i == out.len);
     }
 
     /// A forward iterator. Valid only until the bitmap is mutated.

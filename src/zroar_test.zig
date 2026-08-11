@@ -562,6 +562,48 @@ test "toArray is sorted and matches the reference set" {
     try checkInvariants(&bm);
 }
 
+test "toArrayInto agrees with the iterator, container type by container type" {
+    var bm = try Bitmap.init(testing.allocator);
+    defer bm.deinit();
+
+    // Enough values in the low key to force a bitmap container, a handful in
+    // the next to leave an array container, and a gap so an empty container
+    // is walked too.
+    var i: u64 = 0;
+    while (i < 5000) : (i += 1) _ = try bm.set(i);
+    for ([_]u64{ 3, 17, 0xFFFF }) |v| _ = try bm.set((1 << 16) | v);
+    _ = try bm.set((7 << 48) | 42);
+
+    const card: usize = @intCast(bm.getCardinality());
+    const out = try testing.allocator.alloc(u64, card);
+    defer testing.allocator.free(out);
+    bm.toArrayInto(out);
+
+    // The iterator is the reference: the bulk path exists only to be a faster
+    // way of producing exactly what it produces.
+    var it = bm.iterator();
+    var n: usize = 0;
+    while (it.next()) |v| : (n += 1) {
+        try testing.expectEqual(v, out[n]);
+    }
+    try testing.expectEqual(card, n);
+
+    // Writing into a slice of a larger reusable buffer is the intended use.
+    const big = try testing.allocator.alloc(u64, card + 64);
+    defer testing.allocator.free(big);
+    @memset(big, 0xAA);
+    bm.toArrayInto(big[0..card]);
+    try testing.expectEqualSlices(u64, out, big[0..card]);
+    for (big[card..]) |v| try testing.expectEqual(@as(u64, 0xAA), v);
+}
+
+test "toArrayInto on an empty bitmap writes nothing" {
+    var bm = try Bitmap.init(testing.allocator);
+    defer bm.deinit();
+    var out: [0]u64 = undefined;
+    bm.toArrayInto(&out);
+}
+
 test "toArray on an empty bitmap" {
     var bm = try Bitmap.init(testing.allocator);
     defer bm.deinit();
