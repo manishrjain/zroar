@@ -145,11 +145,13 @@ test "array to bitmap conversion preserves membership" {
 
     // Values chosen so some land in low words and some in high words,
     // which is exactly the case an in-place conversion without a scratch
-    // copy would break.
+    // copy would break. The stride is derived rather than fixed so the whole
+    // u16 range stays covered however many values the ladder now allows.
+    const stride = (1 << 16) / max_array_values;
     var expected: [max_array_values]u16 = undefined;
     var i: usize = 0;
     while (i < max_array_values) : (i += 1) {
-        expected[i] = @intCast(i * 32);
+        expected[i] = @intCast(i * stride);
         try testing.expect(array.add(c, expected[i]));
     }
     try testing.expectEqual(@as(u32, max_array_values), getCardinality(c));

@@ -249,10 +249,7 @@ pub const Bitmap = struct {
         // Only array containers ever grow; bitmap containers are already
         // maximal.
         assert(sz >= container.min_size and sz <= container.max_array_size);
-        const new_sz: u16 = if (sz >= container.max_array_size)
-            container.max_size
-        else
-            sz * 2;
+        const new_sz = container.nextArraySize(sz);
 
         if (offset + sz == self.data.len) {
             // No other container's offset is beyond ours, so no key needs
@@ -309,17 +306,6 @@ pub const Bitmap = struct {
         self.data = self.data.ptr[0 .. old_len - by_size];
     }
 
-    /// The next array-container size up from `sz`: the ladder doubling from
-    /// container.min_size to max_array_size, and max_size beyond that, where
-    /// only a bitmap container is left.
-    fn stepSize(sz: u16) u16 {
-        var i: u16 = container.min_size;
-        while (i <= container.max_array_size / 2) : (i *= 2) {
-            if (sz <= i) return i * 2;
-        }
-        return container.max_size;
-    }
-
     /// Installs the container `src` for `key` at `offset`, growing the
     /// container already there when `src` no longer fits it — up to the full
     /// bitmap size, which also retypes it. Port of sroar's copyAt; it lands
@@ -349,8 +335,8 @@ pub const Bitmap = struct {
             assert(container.size(src) == container.max_size);
             break :blk container.max_size;
         } else blk: {
-            var t = stepSize(dst_size);
-            while (t < container.size(src)) t = stepSize(t);
+            var t = container.nextArraySize(dst_size);
+            while (t < container.size(src)) t = container.nextArraySize(t);
             // containerOr only ever builds array results that an array
             // container can hold, so the step never runs past the array
             // ceiling.
@@ -1186,6 +1172,97 @@ pub const Bitmap = struct {
         // container can be told apart from a live one by its cardinality alone.
         self.cleanupKeys();
         self.cleanupContainers();
+        self.dead = 0;
+    }
+
+    /// The smallest size a container holding `card` values may legally have,
+    /// and hence what `compact` gives it. Bitmap containers that fit an array
+    /// become one: a bitmap container costs a fixed `max_size` however few of
+    /// its bits are set.
+    fn compactSizeFor(card: usize) u16 {
+        return container.compactArraySizeFor(card) orelse container.max_size;
+    }
+
+    /// Rewrites the bitmap into the smallest buffer that holds it, for storing.
+    ///
+    /// Three kinds of slack go away:
+    ///
+    ///   - dead space left behind by container relocation, via `cleanup`
+    ///   - the gap between a container's cardinality and its ladder step, since
+    ///     `container.array_sizes` rounds up so containers have room to grow
+    ///   - bitmap containers holding few enough values to fit an array, which
+    ///     is a fixed `max_size` no matter how sparse it is
+    ///
+    /// The result is an ordinary mutable bitmap, not a frozen one: every array
+    /// container keeps the free slot its invariant demands and the keys node
+    /// keeps one spare key, so the next `set` behaves exactly as it would have.
+    /// It is only sized so that growth starts sooner. Serializing right after
+    /// compacting is the point — `toBuffer` then hands back the smallest
+    /// buffer that round-trips.
+    ///
+    /// O(total values): every container is rewritten, and a bitmap container
+    /// that converts is walked bit by bit.
+    pub fn compact(self: *Bitmap) !void {
+        // Empty containers and dead slots first; no point measuring them.
+        self.cleanup();
+
+        const ks = self.keys();
+        const num_keys = ks.numKeys();
+
+        // One spare key slot, mirroring the arrays' free slot: `Keys.set`
+        // requires the node not be full when it is called.
+        const node_size = 4 * (2 * (num_keys + 1) + 2);
+
+        var total: usize = node_size;
+        for (0..num_keys) |i| {
+            const c = self.getContainer(ks.val(i));
+            total += compactSizeFor(container.getCardinality(c));
+        }
+
+        const out = try self.allocator.alignedAlloc(u16, .@"8", total);
+        errdefer self.allocator.free(out);
+        @memset(out, 0);
+
+        const p: [*]u64 = @ptrCast(out.ptr);
+        const new_ks = Keys{ .n = p[0 .. node_size / 4] };
+        new_ks.setNodeSize(node_size);
+        new_ks.setNumKeys(num_keys);
+
+        var off: usize = node_size;
+        for (0..num_keys) |i| {
+            const src = self.getContainer(ks.val(i));
+            const card = container.getCardinality(src);
+            const sz = compactSizeFor(card);
+            const dst = out[off..][0..sz];
+
+            if (sz == container.max_size) {
+                // Too dense for an array; carry the bitmap over as it is.
+                assert(container.getType(src) == .bitmap);
+                @memcpy(dst, src);
+            } else switch (container.getType(src)) {
+                .array => {
+                    container.setType(dst, .array);
+                    container.setCardinality(dst, card);
+                    @memcpy(
+                        dst[container.start_idx..][0..card],
+                        container.array.values(src),
+                    );
+                },
+                // Sets type and cardinality itself.
+                .bitmap => container.bitmap.toArrayInto(dst, src),
+            }
+            dst[container.index_size] = sz;
+
+            new_ks.setKeyAt(i, ks.key(i));
+            new_ks.setValAt(i, off);
+            off += sz;
+        }
+        assert(off == total);
+
+        if (self.owned) self.allocator.free(self.data.ptr[0..self.cap]);
+        self.data = out.ptr[0..total];
+        self.cap = total;
+        self.owned = true;
         self.dead = 0;
     }
 

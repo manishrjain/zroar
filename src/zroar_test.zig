@@ -13,6 +13,12 @@ const max_node_growth = zroar.max_node_growth;
 const min_buffer_bytes = zroar.min_buffer_bytes;
 const testing = std.testing;
 
+/// Comfortably past the array-container ceiling, whatever `array_sizes`
+/// currently ends at. Tests that want a bitmap container ask for this many
+/// values rather than restating the ladder, which would otherwise have to be
+/// re-derived by hand every time the ladder is tuned.
+const past_array_ceiling: u64 = container.max_array_values + 200;
+
 // Helpers `prop_test.zig` needs too, so they live in `test_util.zig`.
 const RefSet = test_util.RefSet;
 const checkInvariants = test_util.checkInvariants;
@@ -73,8 +79,8 @@ test "sequential sets cross the array to bitmap conversion" {
     var bm = try Bitmap.init(testing.allocator);
     defer bm.deinit();
 
-    // 2044 values is the array-container ceiling; go well past it.
-    const n = 3000;
+    // Well past the array-container ceiling.
+    const n = past_array_ceiling;
     var i: u64 = 0;
     while (i < n) : (i += 1) {
         try testing.expect(try bm.set(i));
@@ -260,7 +266,11 @@ test "the smallest container fills and expands at exactly its capacity" {
     }
     _ = try bm.set(i);
     const grown = bm.getContainer(bm.keys().val(0));
-    try testing.expectEqual(container.min_size * 2, container.size(grown));
+    // The next size up the ladder, whatever the ladder says it is.
+    try testing.expectEqual(
+        container.nextArraySize(container.min_size),
+        container.size(grown),
+    );
     try testing.expectEqual(@as(u64, capacity), bm.getCardinality());
     try checkInvariants(&bm);
 }
@@ -298,9 +308,14 @@ test "keys-node growth interleaved with container growth" {
     var k: u64 = 0;
     while (k < num_keys) : (k += 1) {
         var j: u64 = 0;
-        while (j < 2500) : (j += 1) _ = try bm.set((k << 16) | j);
+        while (j < past_array_ceiling) : (j += 1) {
+            _ = try bm.set((k << 16) | j);
+        }
     }
-    try testing.expectEqual(@as(u64, num_keys * 2500), bm.getCardinality());
+    try testing.expectEqual(
+        @as(u64, num_keys * past_array_ceiling),
+        bm.getCardinality(),
+    );
     try checkInvariants(&bm);
 
     k = 0;
@@ -310,10 +325,10 @@ test "keys-node growth interleaved with container growth" {
             containerTypeOf(&bm, k << 16),
         );
         var j: u64 = 0;
-        while (j < 2500) : (j += 1) {
+        while (j < past_array_ceiling) : (j += 1) {
             try testing.expect(bm.contains((k << 16) | j));
         }
-        try testing.expect(!bm.contains((k << 16) | 2500));
+        try testing.expect(!bm.contains((k << 16) | past_array_ceiling));
     }
 }
 
@@ -449,7 +464,9 @@ test "remove from both container types" {
     // Key 0 stays an array container, key 1 is promoted to a bitmap.
     var i: u64 = 0;
     while (i < 100) : (i += 1) _ = try bm.set(i);
-    while (i < 100 + 3000) : (i += 1) _ = try bm.set((1 << 16) | (i - 100));
+    while (i < 100 + past_array_ceiling) : (i += 1) {
+        _ = try bm.set((1 << 16) | (i - 100));
+    }
     try testing.expectEqual(container.Type.array, containerTypeOf(&bm, 0));
     try testing.expectEqual(
         container.Type.bitmap,
@@ -466,7 +483,10 @@ test "remove from both container types" {
     try testing.expect(!bm.contains((1 << 16) | 2000));
 
     try testing.expect(!bm.remove(1 << 32)); // key not present at all
-    try testing.expectEqual(@as(u64, 100 + 3000 - 2), bm.getCardinality());
+    try testing.expectEqual(
+        @as(u64, 100 + past_array_ceiling - 2),
+        bm.getCardinality(),
+    );
     try checkInvariants(&bm);
 
     // Emptying a container must not disturb minimum/maximum of the others.
@@ -490,13 +510,13 @@ test "iterator emits value 0 from a bitmap container" {
 
     // Promote key 0's container to a bitmap while keeping the value 0 in it.
     var i: u64 = 0;
-    while (i < 3000) : (i += 1) _ = try bm.set(i);
+    while (i < past_array_ceiling) : (i += 1) _ = try bm.set(i);
     try testing.expectEqual(container.Type.bitmap, containerTypeOf(&bm, 0));
 
     var it = bm.iterator();
     try testing.expectEqual(@as(?u64, 0), it.next()); // not an end sentinel
     var expected: u64 = 1;
-    while (expected < 3000) : (expected += 1) {
+    while (expected < past_array_ceiling) : (expected += 1) {
         try testing.expectEqual(@as(?u64, expected), it.next());
     }
     try testing.expectEqual(@as(?u64, null), it.next());
@@ -595,6 +615,94 @@ test "toArrayInto agrees with the iterator, container type by container type" {
     bm.toArrayInto(big[0..card]);
     try testing.expectEqualSlices(u64, out, big[0..card]);
     for (big[card..]) |v| try testing.expectEqual(@as(u64, 0xAA), v);
+}
+
+test "compact shrinks the buffer, preserves content, and stays mutable" {
+    var bm = try Bitmap.init(testing.allocator);
+    defer bm.deinit();
+
+    var ref = std.ArrayListUnmanaged(u64).empty;
+    defer ref.deinit(testing.allocator);
+
+    var prng = std.Random.DefaultPrng.init(0x5A1AD);
+    const rnd = prng.random();
+    var i: usize = 0;
+    while (i < 20_000) : (i += 1) {
+        // A dense low key (bitmap container), a mid key that lands just under
+        // a ladder step, and scattered high keys with a value or two each.
+        const x = switch (i % 3) {
+            0 => rnd.uintLessThan(u64, 20_000),
+            1 => (1 << 16) | rnd.uintLessThan(u64, 1200),
+            else => (rnd.uintLessThan(u64, 500) << 32) |
+                rnd.uintLessThan(u64, 4),
+        };
+        if (try bm.set(x)) try ref.append(testing.allocator, x);
+    }
+    std.mem.sort(u64, ref.items, {}, std.sort.asc(u64));
+
+    const before = bm.toBuffer().len;
+    try bm.compact();
+    const after = bm.toBuffer().len;
+    try testing.expect(after < before);
+    try checkInvariants(&bm);
+
+    // Content is untouched.
+    const got = try bm.toArray(testing.allocator);
+    defer testing.allocator.free(got);
+    try testing.expectEqualSlices(u64, ref.items, got);
+
+    // Compacting again is a no-op: it is already as small as it goes.
+    try bm.compact();
+    try testing.expectEqual(after, bm.toBuffer().len);
+
+    // And it is still an ordinary bitmap: writing into it works, including
+    // into containers that compaction sized down to their last free slot.
+    for (ref.items[0..64]) |v| try testing.expect(!try bm.set(v));
+    var added: usize = 0;
+    var v: u64 = 1;
+    while (added < 2000) : (v += 7) {
+        if (try bm.set((7 << 48) | (v % 60_000))) added += 1;
+    }
+    try checkInvariants(&bm);
+    for (ref.items) |x| try testing.expect(bm.contains(x));
+}
+
+test "compact round trips through a buffer" {
+    var bm = try Bitmap.init(testing.allocator);
+    defer bm.deinit();
+    var i: u64 = 0;
+    // Enough in one key to be a bitmap container, but sparse enough that an
+    // array container is smaller — so compact must convert it back.
+    while (i < 1500) : (i += 1) _ = try bm.set(i * 40);
+    while (i < 3000) : (i += 1) _ = try bm.set((9 << 32) | i);
+
+    const card = bm.getCardinality();
+    try bm.compact();
+    try testing.expectEqual(card, bm.getCardinality());
+
+    const buf = try bm.toBufferCopy(testing.allocator);
+    defer testing.allocator.free(buf);
+    var reopened = try Bitmap.fromBuffer(testing.allocator, buf);
+    defer reopened.deinit();
+    try testing.expectEqual(card, reopened.getCardinality());
+
+    const a = try bm.toArray(testing.allocator);
+    defer testing.allocator.free(a);
+    const b = try reopened.toArray(testing.allocator);
+    defer testing.allocator.free(b);
+    try testing.expectEqualSlices(u64, a, b);
+    try checkInvariants(&reopened);
+}
+
+test "compact on an empty bitmap keeps key 0 and stays usable" {
+    var bm = try Bitmap.init(testing.allocator);
+    defer bm.deinit();
+    try bm.compact();
+    try checkInvariants(&bm);
+    try testing.expectEqual(@as(u64, 0), bm.getCardinality());
+    try testing.expect(try bm.set(1 << 40));
+    try testing.expect(bm.contains(1 << 40));
+    try checkInvariants(&bm);
 }
 
 test "toArrayInto on an empty bitmap writes nothing" {
@@ -925,20 +1033,23 @@ test "And sizes each result container to the result" {
     while (i < 5000) : (i += 1) _ = try a.set(i);
     try testing.expectEqual(container.Type.bitmap, containerTypeOf(&a, 0));
 
-    // 4999 - 2957 + 1 = 2043 values, the most an array container can hold.
+    // The two overlap in exactly as many values as an array container can
+    // hold, so the result must be an array at the ladder's last step: one
+    // value more and it would have had to stay a bitmap.
+    const overlap = container.max_array_values - 1;
     var small = try Bitmap.init(testing.allocator);
     defer small.deinit();
-    i = 2957;
-    while (i < 7957) : (i += 1) _ = try small.set(i);
+    i = 5000 - overlap;
+    while (i < 5000 - overlap + 5000) : (i += 1) _ = try small.set(i);
     try testing.expectEqual(container.Type.bitmap, containerTypeOf(&small, 0));
 
     var got = try Bitmap.And(testing.allocator, &a, &small);
     defer got.deinit();
-    try testing.expectEqual(@as(u64, 2043), got.getCardinality());
+    try testing.expectEqual(@as(u64, overlap), got.getCardinality());
     try testing.expectEqual(container.Type.array, containerTypeOf(&got, 0));
     const got_c = got.getContainer(got.keys().val(0));
-    try testing.expectEqual(@as(u16, 2048), container.size(got_c));
-    try testing.expectEqual(@as(?u64, 2957), got.minimum());
+    try testing.expectEqual(container.max_array_size, container.size(got_c));
+    try testing.expectEqual(@as(?u64, 5000 - overlap), got.minimum());
     try testing.expectEqual(@as(?u64, 4999), got.maximum());
     try checkInvariants(&got);
     try expectAndIsCompact(&got);
@@ -946,12 +1057,12 @@ test "And sizes each result container to the result" {
     // One value more and no array container fits, so the result stays a bitmap.
     var big = try Bitmap.init(testing.allocator);
     defer big.deinit();
-    i = 2956;
-    while (i < 7956) : (i += 1) _ = try big.set(i);
+    i = 5000 - overlap - 1;
+    while (i < 5000 - overlap - 1 + 5000) : (i += 1) _ = try big.set(i);
 
     var got2 = try Bitmap.And(testing.allocator, &a, &big);
     defer got2.deinit();
-    try testing.expectEqual(@as(u64, 2044), got2.getCardinality());
+    try testing.expectEqual(@as(u64, overlap + 1), got2.getCardinality());
     try testing.expectEqual(container.Type.bitmap, containerTypeOf(&got2, 0));
     try checkInvariants(&got2);
     try expectAndIsCompact(&got2);
@@ -1534,7 +1645,9 @@ test "fromSortedList matches a set loop and round trips" {
     randomValues(rnd, &vals);
     // A dense run so at least one key needs a bitmap container, and duplicates
     // so the builder has to skip them.
-    for (vals[0..5000], 0..) |*v, i| v.* = (1 << 32) | (i / 2);
+    for (vals[0..5000], 0..) |*v, i| {
+        v.* = (1 << 32) | (i % past_array_ceiling);
+    }
     std.mem.sort(u64, &vals, {}, std.sort.asc(u64));
 
     var built = try Bitmap.fromSortedList(testing.allocator, &vals);

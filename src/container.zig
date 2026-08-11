@@ -28,24 +28,45 @@ pub const index_cardinality: usize = 2;
 /// First payload element.
 pub const start_idx: usize = 4;
 
-/// Smallest array container, in u16 units, header included. The one knob that
-/// sets the whole size ladder: array containers step 8 -> 16 -> ... -> 2048
-/// from here, and every sizing decision in the library derives from it
-/// (arraySizeFor, stepSize, expandContainer, init's key-0 container,
-/// min_buffer_bytes, fromSortedList and fastOr's pre-sizing).
+/// Every size an array container may have, in u16 units, header included.
 ///
-/// The trade-off is waste against growth steps. At 8 a container costs 16 bytes
-/// and holds 4 values, so a key with a single value wastes almost nothing —
-/// the case that dominates scattered u64 data, where a serialized bitmap is
-/// mostly one-value containers. Raising it front-loads capacity: a container
-/// that will end up dense reaches its final size in fewer doublings, each of
-/// which moves the container to the end of the buffer and leaves a dead slot
-/// behind, at the price of that much space standing empty in every sparse
-/// container. Must be a multiple of 4 (the 8-byte alignment invariant) and
-/// larger than the 4-u16 header.
-pub const min_size: u16 = 8;
+/// Listed rather than computed. These are the only legal array sizes, they are
+/// the sizes a serialized buffer will contain, and every sizing decision in the
+/// library goes through this table (`arraySizeFor`, `nextArraySize`, init's
+/// key-0 container, `min_buffer_bytes`, `fromSortedList` and `fastOr`'s
+/// pre-sizing). A doubling rule computed the same numbers but hid them, and
+/// hid that the last step is the one that decides where bitmap containers
+/// start.
+///
+/// The trade-off along the ladder is waste against growth events. A container
+/// wastes the difference between its cardinality and its step; a container
+/// that outgrows a step relocates to the end of the buffer and leaves a dead
+/// slot behind (see `max_dead_divisor`), so finer steps waste less but churn
+/// more. The first entry matters most: at 8 a container costs 16 bytes and
+/// holds 4 values, so a key with a single value wastes almost nothing — the
+/// case that dominates scattered u64 data, where a serialized bitmap is mostly
+/// one-value containers.
+///
+/// So the ladder doubles while containers are small, where a step wastes only
+/// a few hundred bytes and another growth event would cost more than it saves,
+/// and takes half-steps from 1024 on, where doubling starts wasting kilobytes.
+///
+/// The last entry decides where arrays stop and bitmaps begin, which is a
+/// bigger lever than it looks: a bitmap container is a fixed `max_size` and
+/// extracts roughly 6x slower per value than an array, but answers membership
+/// in one bit test and unions by vectorized word ops. 3072 u16 is 6144 bytes,
+/// still under `max_size`, so every entry here is a size at which an array
+/// genuinely beats a bitmap on space. The next half-step, 4096, would be 8192
+/// bytes — a wash against a bitmap, so it would give up O(1) membership and
+/// vectorized set ops for nothing. See DESIGN.md.
+pub const array_sizes = [_]u16{
+    8, 16, 32, 64, 128, 256, 512, 1024, 1536, 2048, 3072,
+};
+
+/// Smallest array container, in u16 units, header included.
+pub const min_size: u16 = array_sizes[0];
 /// An array container that would grow past this converts to a bitmap instead.
-pub const max_array_size: u16 = 2048;
+pub const max_array_size: u16 = array_sizes[array_sizes.len - 1];
 /// Bitmap containers are always this size: 4 header + 4096 payload u16s.
 pub const max_size: u16 = 4 + (1 << 16) / 16;
 /// Payload words of a bitmap container.
@@ -58,12 +79,15 @@ pub const max_cardinality: u32 = 1 << 16;
 pub const invalid_cardinality: u32 = std.math.maxInt(u32);
 
 comptime {
-    // The ladder doubles from min_size and must land exactly on max_array_size,
-    // or arraySizeFor and expandContainer would disagree about the last step.
-    assert(std.math.isPowerOfTwo(min_size));
+    assert(array_sizes.len > 0);
     assert(min_size > start_idx); // room for at least one value
-    assert(min_size % 4 == 0); // the 8-byte alignment invariant
-    assert(min_size <= max_array_size);
+    // A bitmap container must be the strictly larger option, or the last
+    // growth step would not be a step.
+    assert(max_array_size < max_size);
+    for (array_sizes, 0..) |sz, i| {
+        assert(sz % 4 == 0); // the 8-byte alignment invariant
+        if (i > 0) assert(sz > array_sizes[i - 1]); // strictly ascending
+    }
 }
 
 /// Allocated size of the container, in u16 units, header included.
@@ -156,11 +180,35 @@ pub fn recomputeCardinality(c: []u16) void {
 /// `count` values plus the free slot the invariant demands, or null when no
 /// array container is big enough and a bitmap container must be used instead.
 pub fn arraySizeFor(count: usize) ?u16 {
-    var sz: u16 = min_size;
-    while (sz <= max_array_size) : (sz *= 2) {
+    for (array_sizes) |sz| {
         if (start_idx + count + 1 <= sz) return sz;
     }
     return null;
+}
+
+/// The smallest legal array-container size holding `count` values, ignoring
+/// the ladder, or null when only a bitmap container will do.
+///
+/// `arraySizeFor` rounds up to a ladder step so a container has room to grow
+/// into. This rounds up only as far as the invariants demand — the free slot
+/// and the 8-byte alignment — which is what `Bitmap.compact` wants, since its
+/// whole purpose is to hand that room back.
+pub fn compactArraySizeFor(count: usize) ?u16 {
+    const needed = start_idx + count + 1; // + the free slot
+    const aligned = (needed + 3) / 4 * 4;
+    if (aligned > max_array_size) return null;
+    return @max(min_size, @as(u16, @intCast(aligned)));
+}
+
+/// The next size up from `sz` on the ladder, or `max_size` once the ladder is
+/// exhausted and only a bitmap container is left. `sz` need not itself be a
+/// ladder entry: `compact` produces sizes between steps, and callers grow a
+/// container towards a size they already hold.
+pub fn nextArraySize(sz: u16) u16 {
+    for (array_sizes) |s| {
+        if (s > sz) return s;
+    }
+    return max_size;
 }
 
 /// Array container: a sorted, duplicate-free run of u16s after the header.
