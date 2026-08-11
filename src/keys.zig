@@ -22,6 +22,23 @@ pub const index_node_size: usize = 0;
 pub const index_num_keys: usize = 1;
 pub const index_node_start: usize = 2;
 
+/// Window size at which `search` stops bisecting and scans instead.
+///
+/// The right value depends on how predictable the lookups are, which is why it
+/// is smaller than raw throughput alone would suggest. A wider window is faster
+/// when probes are random, but the scan's comparisons are work that cannot be
+/// speculated away, whereas a bisection step costs nothing once the branch
+/// predictor has learnt the path. So a repetitive probe stream pays for every
+/// element of the window.
+///
+/// Measured (`zig build searchbench`, medians of ten runs, mean ns/lookup
+/// against a plain bisect): 8 -> 16 buys 2.48 ns on non-repeating lookups for
+/// 0.98 ns on repeating ones, while 16 -> 32 buys only 0.96 ns more and costs
+/// 1.83 ns — the trade inverts. 16 is also the widest window that is still
+/// faster-or-even on a replayed 1024-value stream, so it loses only in the
+/// degenerate case of a handful of values looked up forever.
+pub const scan_max_keys: usize = 16;
+
 fn keyOffset(i: usize) usize {
     return index_node_start + 2 * i;
 }
@@ -86,14 +103,35 @@ pub const Keys = struct {
 
     /// Returns the index of the smallest key >= k, or numKeys() if there is
     /// none.
+    ///
+    /// Bisecting is a serial chain: each step must wait for the previous load
+    /// before it knows where to look next, so its cost is latency, not work.
+    /// Once the window is small the scan below wins, because its loads are
+    /// independent and sequential: they issue together and the prefetcher sees
+    /// them coming. So bisect only until the window is small, then count.
     pub fn search(self: Keys, k: u64) usize {
+        return self.searchWindow(scan_max_keys, k);
+    }
+
+    /// `search` with the scan window given explicitly. `window` is comptime,
+    /// so this is exactly the code `search` compiles to; the parameter exists
+    /// so a benchmark can sweep the cutoff against the shipping function
+    /// rather than against a copy of it that might drift.
+    pub fn searchWindow(self: Keys, comptime window: usize, k: u64) usize {
         var lo: usize = 0;
         var hi: usize = self.numKeys();
-        while (lo < hi) {
+        while (hi - lo > window) {
             const mid = lo + (hi - lo) / 2;
             if (self.n[keyOffset(mid)] < k) lo = mid + 1 else hi = mid;
         }
-        return lo;
+        // Counting rather than breaking out keeps this branch-free: the
+        // comparison feeds an add, so there is nothing to mispredict.
+        var count: usize = 0;
+        var i = lo;
+        while (i < hi) : (i += 1) {
+            count += @intFromBool(self.n[keyOffset(i)] < k);
+        }
+        return lo + count;
     }
 
     /// Returns the container offset registered for k, or null if k has no

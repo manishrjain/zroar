@@ -172,17 +172,71 @@ pub const array = struct {
         return c[start_idx..][0..n];
     }
 
+    /// Window size at which `find` stops bisecting and scans instead.
+    ///
+    /// Values are contiguous u16, so a vector load is 16 of them and the scan
+    /// is cheap per element — which argues for a wide window. What holds it
+    /// down is that the scan's work cannot be speculated away, while the
+    /// bisection steps it replaces cost nothing once lookups repeat and the
+    /// branch predictor has learnt the path.
+    ///
+    /// Measured (`zig build searchbench`, medians of ten runs, mean ns/lookup
+    /// against a plain bisect): widening 64 -> 128 buys 0.66 ns on
+    /// non-repeating lookups and costs 1.07 ns on repeating ones, so it only
+    /// pays if over ~62% of lookups never repeat. 256 is worse than 128 in
+    /// every stream. Hence 64.
+    pub const scan_max_values: usize = 64;
+
+    const scan_lanes = 16;
+    const Scan = @Vector(scan_lanes, u16);
+    const ScanMask = std.meta.Int(.unsigned, scan_lanes);
+
     /// Index (payload-relative) of the first value >= x, or the cardinality if
     /// every value is smaller.
+    ///
+    /// Bisecting is a chain of dependent loads, so its cost is latency: each
+    /// step waits for the previous one before it knows where to look next.
+    /// Scanning has no chain, and one vector load is `scan_lanes` values, so
+    /// past a point the scan is the cheaper way to finish. Bisect down to that
+    /// point, then count.
     pub fn find(c: []const u16, x: u16) usize {
+        return findWindow(scan_max_values, c, x);
+    }
+
+    /// `find` with the scan window given explicitly. `window` is comptime, so
+    /// this is exactly the code `find` compiles to; the parameter exists so a
+    /// benchmark can sweep the cutoff against the shipping function rather
+    /// than against a copy of it that might drift.
+    pub fn findWindow(
+        comptime window: usize,
+        c: []const u16,
+        x: u16,
+    ) usize {
         const vals = values(c);
         var lo: usize = 0;
         var hi: usize = vals.len;
-        while (lo < hi) {
+        while (hi - lo > window) {
             const mid = lo + (hi - lo) / 2;
             if (vals[mid] < x) lo = mid + 1 else hi = mid;
         }
-        return lo;
+        return lo + scan(vals[lo..hi], x);
+    }
+
+    /// Counts values below x. Branch-free by construction: a lane comparison
+    /// feeds a popcount, so there is nothing to mispredict. Stopping early at
+    /// the first value >= x would do less work but costs an unpredictable
+    /// branch, which measured worse.
+    fn scan(vals: []const u16, x: u16) usize {
+        const target: Scan = @splat(x);
+        var count: usize = 0;
+        var i: usize = 0;
+        while (i + scan_lanes <= vals.len) : (i += scan_lanes) {
+            const v: Scan = vals[i..][0..scan_lanes].*;
+            const below: ScanMask = @bitCast(v < target);
+            count += @popCount(below);
+        }
+        while (i < vals.len) : (i += 1) count += @intFromBool(vals[i] < x);
+        return count;
     }
 
     pub fn has(c: []const u16, x: u16) bool {

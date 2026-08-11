@@ -23,12 +23,45 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&b.addRunArtifact(tests).step);
 
+    addSearchBench(b, target, optimize);
+
     // b.option panics if an option is declared twice, so anything shared by
     // the bench and difftest wiring is resolved exactly once, here.
     const roaring_zig = roaringZigRoot(b);
     const c_flags = croaringFlags(b, target);
     addBench(b, target, optimize, roaring_zig, c_flags);
     addDifftest(b, target, optimize, roaring_zig, c_flags);
+}
+
+/// Wires up `zig build searchbench`: the keys-node and array-container search
+/// paths against a plain bisect, under probe streams of varying predictability.
+/// Needs neither CRoaring nor a dataset, so it stays independent of the main
+/// bench wiring and runs in a couple of seconds.
+fn addSearchBench(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) void {
+    // Timings from an unoptimized build would only mislead, so default to
+    // ReleaseFast whatever the build's own mode is.
+    const bench_optimize: std.builtin.OptimizeMode =
+        if (optimize == .Debug) .ReleaseFast else optimize;
+
+    const exe = b.addExecutable(.{
+        .name = "search_bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/search_bench.zig"),
+            .target = target,
+            .optimize = bench_optimize,
+            .link_libc = true, // std.heap.c_allocator
+        }),
+    });
+
+    const step = b.step(
+        "searchbench",
+        "Benchmark Keys.search and array.find against a plain bisect",
+    );
+    step.dependOn(&b.addRunArtifact(exe).step);
 }
 
 /// Wires up `zig build difftest`: identical op streams through zroar and
