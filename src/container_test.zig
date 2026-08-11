@@ -3,6 +3,12 @@
 
 const std = @import("std");
 const container = @import("container.zig");
+const stats_mod = @import("stats.zig");
+
+/// These tests exercise the container and keys kernels directly rather than
+/// through a Bitmap, so they have no counters of their own to feed. The
+/// counting is covered by stats_test.zig; here it is deliberately discarded.
+var sink: stats_mod.Sink = .{};
 
 const testing = std.testing;
 
@@ -59,10 +65,10 @@ test "array add/has/find/remove" {
     const c = try testContainer(arraySize(3), .array);
     defer testing.allocator.free(c);
 
-    try testing.expect(array.add(c, 10));
-    try testing.expect(array.add(c, 5));
-    try testing.expect(array.add(c, 20));
-    try testing.expect(!array.add(c, 10)); // duplicate
+    try testing.expect(array.add(c, 10, &sink));
+    try testing.expect(array.add(c, 5, &sink));
+    try testing.expect(array.add(c, 20, &sink));
+    try testing.expect(!array.add(c, 10, &sink)); // duplicate
     try testing.expectEqual(@as(u32, 3), getCardinality(c));
     try testing.expectEqualSlices(u16, &.{ 5, 10, 20 }, array.values(c));
 
@@ -87,8 +93,8 @@ test "array boundary values 0 and 0xFFFF" {
     const c = try testContainer(arraySize(2), .array);
     defer testing.allocator.free(c);
 
-    try testing.expect(array.add(c, 0xFFFF));
-    try testing.expect(array.add(c, 0));
+    try testing.expect(array.add(c, 0xFFFF, &sink));
+    try testing.expect(array.add(c, 0, &sink));
     try testing.expectEqualSlices(u16, &.{ 0, 0xFFFF }, array.values(c));
     try testing.expect(array.has(c, 0));
     try testing.expect(array.has(c, 0xFFFF));
@@ -103,10 +109,10 @@ test "array isFull tracks the free-slot invariant" {
 
     var i: u16 = 0;
     while (i < min_size - start_idx - 1) : (i += 1) {
-        try testing.expect(array.add(c, i));
+        try testing.expect(array.add(c, i, &sink));
         try testing.expect(!array.isFull(c));
     }
-    try testing.expect(array.add(c, i));
+    try testing.expect(array.add(c, i, &sink));
     try testing.expect(array.isFull(c));
 }
 
@@ -152,7 +158,7 @@ test "array to bitmap conversion preserves membership" {
     var i: usize = 0;
     while (i < max_array_values) : (i += 1) {
         expected[i] = @intCast(i * stride);
-        try testing.expect(array.add(c, expected[i]));
+        try testing.expect(array.add(c, expected[i], &sink));
     }
     try testing.expectEqual(@as(u32, max_array_values), getCardinality(c));
 
@@ -174,7 +180,7 @@ test "dispatching add/has/remove by container type" {
     defer testing.allocator.free(b);
 
     for ([_][]u16{ a, b }) |c| {
-        try testing.expect(add(c, 42));
+        try testing.expect(add(c, 42, &sink));
         try testing.expect(has(c, 42));
         try testing.expect(!has(c, 43));
         try testing.expectEqual(@as(u16, 42), minimum(c));
@@ -208,7 +214,7 @@ test "cardinality header is a u32 spanning both header slots" {
 
 /// Fills a container with `vals` (which must fit).
 fn fill(c: []u16, vals: []const u16) void {
-    for (vals) |v| _ = add(c, v);
+    for (vals) |v| _ = add(c, v, &sink);
 }
 
 /// Every value of a container, ascending, whatever its type. Lets a test
@@ -294,7 +300,7 @@ test "containerAnd of two arrays takes the galloping path in both directions" {
     defer testing.allocator.free(small);
 
     var i: u16 = 0;
-    while (i < 1000) : (i += 1) _ = array.add(large, i * 3);
+    while (i < 1000) : (i += 1) _ = array.add(large, i * 3, &sink);
     fill(small, &.{ 0, 1, 3, 2997 });
     const expected = [_]u16{ 0, 3, 2997 };
 
@@ -399,8 +405,8 @@ test "containerOr of two arrays keeps a free slot and grows to a bitmap" {
     const big_b = try testContainer(arraySize(2), .array);
     defer testing.allocator.free(big_b);
     var i: u16 = 0;
-    while (i < limit - 1) : (i += 1) _ = array.add(big_a, i);
-    _ = array.add(big_b, 40000);
+    while (i < limit - 1) : (i += 1) _ = array.add(big_a, i, &sink);
+    _ = array.add(big_b, 40000, &sink);
 
     const fits = containerOr(big_a, big_b, buf, false).?;
     try testing.expectEqual(Type.array, getType(fits));
@@ -408,7 +414,7 @@ test "containerOr of two arrays keeps a free slot and grows to a bitmap" {
     try testing.expectEqual(@as(u16, max_array_size), size(fits));
     try testing.expect(!array.isFull(fits));
 
-    _ = array.add(big_b, 40001);
+    _ = array.add(big_b, 40001, &sink);
     const grown = containerOr(big_a, big_b, buf, false).?;
     try testing.expectEqual(Type.bitmap, getType(grown));
     try testing.expectEqual(@as(u32, limit + 1), getCardinality(grown));

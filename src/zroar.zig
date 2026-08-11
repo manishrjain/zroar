@@ -22,8 +22,12 @@ comptime {
 
 const container = @import("container.zig");
 const keys_mod = @import("keys.zig");
+const stats = @import("stats.zig");
 
 pub const Keys = keys_mod.Keys;
+/// Optional counters for the memory movement this library does; off unless
+/// the root source file declares `pub const zroar_track_stats = true`.
+pub const Stats = stats;
 pub const Iterator = @import("iterator.zig").Iterator;
 
 /// The high 48 bits of a value select its container.
@@ -75,6 +79,10 @@ pub const Bitmap = struct {
     /// Dead u16s abandoned by container relocation; see `max_dead_divisor`.
     dead: usize = 0,
     allocator: std.mem.Allocator,
+    /// Optional per-bitmap counters for the memory this bitmap moves around.
+    /// Zero-bit and inert unless the root source file declares
+    /// `pub const zroar_track_stats = true`; see `stats.zig`.
+    counters: stats.Sink = .{},
 
     /// Creates an empty bitmap. The caller owns it and must call `deinit`.
     pub fn init(allocator: std.mem.Allocator) !Bitmap {
@@ -180,10 +188,12 @@ pub const Bitmap = struct {
             else
                 null;
 
+            stats.bump(&self.counters, .buffer_grows, 1);
             if (grown) |m| {
                 self.data = m.ptr[0..to_size];
                 self.cap = new_cap;
             } else {
+                stats.bump(&self.counters, .buffer_copied_u16, old_len);
                 const out =
                     try self.allocator.alignedAlloc(u16, .@"8", new_cap);
                 @memcpy(out[0..offset], self.data[0..offset]);
@@ -231,6 +241,7 @@ pub const Bitmap = struct {
     fn markDead(self: *Bitmap, offset: usize) void {
         const sz = self.data[offset];
         @memset(self.data[offset + 1 ..][0 .. sz - 1], 0);
+        stats.bump(&self.counters, .abandoned_u16, sz);
         self.dead += sz;
         if (self.dead * max_dead_divisor > self.data.len) self.cleanup();
     }
@@ -250,6 +261,7 @@ pub const Bitmap = struct {
         // maximal.
         assert(sz >= container.min_size and sz <= container.max_array_size);
         const new_sz = container.nextArraySize(sz);
+        stats.bump(&self.counters, .container_grows, 1);
 
         if (offset + sz == self.data.len) {
             // No other container's offset is beyond ours, so no key needs
@@ -261,10 +273,11 @@ pub const Bitmap = struct {
             return;
         }
 
+        stats.bump(&self.counters, .container_relocs, 1);
         const off = try self.newContainer(new_sz);
         @memcpy(self.data[off..][0..sz], self.data[offset..][0..sz]);
         self.data[off] = new_sz; // the copy brought the old size header along
-        const inserted = self.keys().set(key, off);
+        const inserted = self.keys().set(key, off, &self.counters);
         assert(!inserted); // the key exists; only its offset moved
         if (new_sz == container.max_size)
             container.array.toBitmap(self.getContainer(off));
@@ -274,9 +287,11 @@ pub const Bitmap = struct {
     /// Registers `offset` for `key`, returning the offset to use afterwards:
     /// growing the keys node shifts every container, including this one.
     fn setKey(self: *Bitmap, key: u64, offset: usize) !usize {
-        if (!self.keys().set(key, offset)) return offset; // key already present
+        // Nothing to do when the key is already present.
+        if (!self.keys().set(key, offset, &self.counters)) return offset;
         if (!self.keys().isFull()) return offset;
 
+        stats.bump(&self.counters, .node_grows, 1);
         const cur_size = self.keys().n.len * 4; // u64 -> u16
         const by_size = @min(cur_size, max_node_growth);
 
@@ -355,7 +370,7 @@ pub const Bitmap = struct {
         const off = try self.newContainer(target);
         @memcpy(self.data[off..][0..src.len], src);
         self.data[off] = target;
-        const inserted = self.keys().set(key, off);
+        const inserted = self.keys().set(key, off, &self.counters);
         assert(!inserted); // the key exists; only its offset moved
         self.markDead(offset);
     }
@@ -402,6 +417,7 @@ pub const Bitmap = struct {
 
     /// Adds x. Returns true if it was not already present.
     pub fn set(self: *Bitmap, x: u64) !bool {
+        stats.bump(&self.counters, .sets, 1);
         const key = x & key_mask;
         const lo: u16 = @truncate(x);
 
@@ -413,7 +429,7 @@ pub const Bitmap = struct {
         const c = self.getContainer(offset);
         switch (container.getType(c)) {
             .array => {
-                if (!container.array.add(c, lo)) return false;
+                if (!container.array.add(c, lo, &self.counters)) return false;
                 // Restore the free-slot invariant before anyone reads the
                 // container.
                 if (container.array.isFull(c))
@@ -1170,6 +1186,7 @@ pub const Bitmap = struct {
     pub fn cleanup(self: *Bitmap) void {
         // Keys first: while they still point at their own containers, an empty
         // container can be told apart from a live one by its cardinality alone.
+        stats.bump(&self.counters, .cleanups, 1);
         self.cleanupKeys();
         self.cleanupContainers();
         self.dead = 0;
@@ -1315,6 +1332,9 @@ pub const Bitmap = struct {
             {
                 run += self.data[off + run];
             }
+            const c = &self.counters;
+            stats.bump(c, .cleanup_moved_u16, self.data.len - (off + run));
+            stats.bump(c, .cleanup_key_visits, self.keys().numKeys());
             self.scootLeft(off, run);
             self.keys().updateOffsets(off + run - 1, run, false);
             // `off` now holds the container that followed the hole.

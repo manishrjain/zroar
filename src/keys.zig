@@ -14,6 +14,7 @@
 
 const std = @import("std");
 const assert = std.debug.assert;
+const stats = @import("stats.zig");
 
 /// The high 48 bits of a value select its container; the low 16 select the bit.
 pub const key_mask: u64 = 0xFFFF_FFFF_FFFF_0000;
@@ -147,7 +148,11 @@ pub const Keys = struct {
     /// Inserts key k with offset v, or updates v if k is already present.
     /// Returns true when a new key was added. The caller guarantees room: the
     /// node is grown as soon as it becomes full, so it is never full on entry.
-    pub fn set(self: Keys, k: u64, v: usize) bool {
+    ///
+    /// Reports what it shifted to `sink`: a key inserted below one already
+    /// present moves every key above it, so an unordered stream of keys makes
+    /// this quadratic. `sink` is zero-bit unless the counters are enabled.
+    pub fn set(self: Keys, k: u64, v: usize, sink: *stats.Sink) bool {
         const n = self.numKeys();
         const idx = self.search(k);
         if (idx == n) {
@@ -163,7 +168,7 @@ pub const Keys = struct {
         }
         assert(self.key(idx) > k);
         assert(!self.isFull());
-        self.moveRight(idx);
+        self.moveRight(idx, sink);
         self.setNumKeys(n + 1);
         self.setKeyAt(idx, k);
         self.setValAt(idx, v);
@@ -171,9 +176,10 @@ pub const Keys = struct {
     }
 
     /// Opens a free pair at index lo by shifting [lo, numKeys) one pair right.
-    fn moveRight(self: Keys, lo: usize) void {
+    fn moveRight(self: Keys, lo: usize, sink: *stats.Sink) void {
         const hi = self.numKeys();
         assert(!self.isFull());
+        stats.bump(sink, .node_shifted_u64, 2 * (hi - lo));
         std.mem.copyBackwards(
             u64,
             self.n[keyOffset(lo + 1)..keyOffset(hi + 1)],

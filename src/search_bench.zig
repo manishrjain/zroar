@@ -37,6 +37,7 @@ const std = @import("std");
 const zroar = @import("zroar.zig");
 const keys_mod = @import("keys.zig");
 const container = @import("container.zig");
+const stats_mod = @import("stats.zig");
 
 const probes = 200_000;
 
@@ -358,6 +359,8 @@ fn arrayBisect(c: []const u16, x: u16) usize {
 /// built through the shipping API so header and payload are exactly what the
 /// library would produce.
 fn buildArray(a: std.mem.Allocator, n: usize) ![]u16 {
+    // The counters are not what this benchmark measures; discard them.
+    var sink: stats_mod.Sink = .{};
     const words = container.start_idx + n + 1; // +1 for the free slot
     const c = try a.alignedAlloc(u16, .@"8", words);
     @memset(c, 0);
@@ -367,7 +370,7 @@ fn buildArray(a: std.mem.Allocator, n: usize) ![]u16 {
     const stride = @as(usize, 1 << 16) / n;
     var i: usize = 0;
     while (i < n) : (i += 1) {
-        std.debug.assert(container.array.add(c, @intCast(i * stride)));
+        std.debug.assert(container.array.add(c, @intCast(i * stride), &sink));
     }
     return c;
 }

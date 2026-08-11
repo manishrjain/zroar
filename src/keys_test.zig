@@ -3,6 +3,12 @@
 
 const std = @import("std");
 const keys = @import("keys.zig");
+const stats_mod = @import("stats.zig");
+
+/// These tests exercise the container and keys kernels directly rather than
+/// through a Bitmap, so they have no counters of their own to feed. The
+/// counting is covered by stats_test.zig; here it is deliberately discarded.
+var sink: stats_mod.Sink = .{};
 
 const testing = std.testing;
 
@@ -31,10 +37,10 @@ test "set keeps keys sorted and search finds the lower bound" {
     var backing: [64]u64 = undefined;
     const ks = testNode(&backing, 8);
 
-    try testing.expect(ks.set(0, 24));
-    try testing.expect(ks.set(3 << 16, 200));
-    try testing.expect(ks.set(1 << 16, 100)); // inserted in the middle
-    try testing.expect(ks.set(2 << 16, 150));
+    try testing.expect(ks.set(0, 24, &sink));
+    try testing.expect(ks.set(3 << 16, 200, &sink));
+    try testing.expect(ks.set(1 << 16, 100, &sink)); // inserted in the middle
+    try testing.expect(ks.set(2 << 16, 150, &sink));
 
     try testing.expectEqual(@as(usize, 4), ks.numKeys());
     try testing.expectEqual(@as(u64, 0), ks.key(0));
@@ -47,7 +53,7 @@ test "set keeps keys sorted and search finds the lower bound" {
     try testing.expectEqual(@as(usize, 200), ks.val(3));
 
     // Re-setting an existing key updates the offset and reports "not added".
-    try testing.expect(!ks.set(1 << 16, 111));
+    try testing.expect(!ks.set(1 << 16, 111, &sink));
     try testing.expectEqual(@as(usize, 111), ks.val(1));
     try testing.expectEqual(@as(usize, 4), ks.numKeys());
 
@@ -62,18 +68,18 @@ test "isFull and maxKeys" {
     const ks = testNode(&backing, 2);
     try testing.expectEqual(@as(usize, 2), ks.maxKeys());
     try testing.expect(!ks.isFull());
-    _ = ks.set(0, 8);
+    _ = ks.set(0, 8, &sink);
     try testing.expect(!ks.isFull());
-    _ = ks.set(1 << 16, 16);
+    _ = ks.set(1 << 16, 16, &sink);
     try testing.expect(ks.isFull());
 }
 
 test "updateOffsets shifts only offsets beyond the boundary" {
     var backing: [64]u64 = undefined;
     const ks = testNode(&backing, 8);
-    _ = ks.set(0, 100);
-    _ = ks.set(1 << 16, 200);
-    _ = ks.set(2 << 16, 300);
+    _ = ks.set(0, 100, &sink);
+    _ = ks.set(1 << 16, 200, &sink);
+    _ = ks.set(2 << 16, 300, &sink);
 
     ks.updateOffsets(200, 64, true);
     try testing.expectEqual(@as(usize, 100), ks.val(0));

@@ -8,5 +8,6 @@ test {
     _ = @import("container_test.zig");
     _ = @import("setutil_test.zig");
     _ = @import("keys_test.zig");
+    _ = @import("stats_test.zig");
     _ = @import("prop_test.zig");
 }

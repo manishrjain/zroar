@@ -19,6 +19,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const setutil = @import("setutil.zig");
+const stats = @import("stats.zig");
 
 pub const Type = enum(u16) { array = 0, bitmap = 1 };
 
@@ -117,9 +118,12 @@ pub fn setCardinality(c: []u16, card: u32) void {
 
 /// Adds the low 16 bits `x` to the container. Returns true if newly added.
 /// The caller must handle a now-full array container (expand or convert).
-pub fn add(c: []u16, x: u16) bool {
+///
+/// `sink` receives the count of what this had to move; it is zero-bit and
+/// every write to it disappears unless the counters are enabled.
+pub fn add(c: []u16, x: u16, sink: *stats.Sink) bool {
     return switch (getType(c)) {
-        .array => array.add(c, x),
+        .array => array.add(c, x, sink),
         .bitmap => bitmap.add(c, x),
     };
 }
@@ -296,7 +300,11 @@ pub const array = struct {
     /// Inserts x in sorted position. Returns true if newly added.
     /// Relies on the free-slot invariant: a live array container always has
     /// room for one more.
-    pub fn add(c: []u16, x: u16) bool {
+    ///
+    /// Reports the tail it shifted to `sink`: an insert below the values
+    /// already present moves all of them, which is the dominant cost of
+    /// building a bitmap one value at a time.
+    pub fn add(c: []u16, x: u16, sink: *stats.Sink) bool {
         const n: usize = getCardinality(c);
         const idx = find(c, x);
         const off = start_idx + idx;
@@ -304,6 +312,7 @@ pub const array = struct {
 
         assert(start_idx + n < c.len); // free-slot invariant
         const tail = n - idx;
+        stats.bump(sink, .array_shifted_u16, tail);
         std.mem.copyBackwards(u16, c[off + 1 ..][0..tail], c[off..][0..tail]);
         c[off] = x;
         setCardinality(c, @intCast(n + 1));
