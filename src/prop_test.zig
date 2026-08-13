@@ -200,6 +200,8 @@ fn runOpStream(seed: u64, dist: Distribution, ops: usize) !void {
         } else {
             const x = probeValue(rnd, dist, bases, seen[0..num_seen]);
             const want = ref.remove(x);
+            // Infallible mutators need ownership; a no-op when already owned.
+            try bm.ensureOwned();
             try testing.expectEqual(want, bm.remove(x));
         }
 
@@ -209,7 +211,7 @@ fn runOpStream(seed: u64, dist: Distribution, ops: usize) !void {
         const cp = (i + 1) / checkpoint_every;
         if (cp == 3 or cp == 7) {
             // Reopen borrowing the buffer, then keep mutating it: the first
-            // growth must copy out and leave `buf` alone.
+            // mutation must copy out and leave `buf` alone.
             const buf = try bm.toBufferCopy(testing.allocator);
             const reopened = try Bitmap.fromBuffer(testing.allocator, buf);
             bm.deinit();

@@ -69,15 +69,27 @@ const key_pair_size: usize = 8;
 pub const min_buffer_bytes: usize =
     2 * (4 * (2 * init_num_keys + 2) + container.min_size);
 
+/// See `Bitmap.cursor`.
+const Cursor = struct { key: u64, offset: usize };
+
 pub const Bitmap = struct {
     /// The in-use region of the buffer, in u16 units.
     data: AlignedU16,
     /// Allocated capacity in u16 units. Equals data.len for a borrowed buffer.
     cap: usize,
     /// False for a buffer handed to us by `fromBuffer`; true once we own it.
+    /// Flips on the first mutation, which copies the buffer out beforehand,
+    /// so the caller's buffer is never written to. See `ensureOwned`.
     owned: bool,
     /// Dead u16s abandoned by container relocation; see `max_dead_divisor`.
     dead: usize = 0,
+    /// One-entry cache of the last (key, container offset) a mutation
+    /// resolved. Sequential row-ids land in the same container over and
+    /// over, and a hit turns each repeat's keys-node search into one
+    /// compare. Only the write path uses it — reads keep `*const Bitmap` —
+    /// and it is nulled wherever containers move: relocation (`markDead`),
+    /// `cleanup`, and keys-node growth.
+    cursor: ?Cursor = null,
     allocator: std.mem.Allocator,
     /// Optional per-bitmap counters for the memory this bitmap moves around.
     /// Zero-bit and inert unless the root source file declares
@@ -149,6 +161,23 @@ pub const Bitmap = struct {
         return self.data[offset..][0..sz];
     }
 
+    /// Copies a borrowed buffer into one this bitmap owns, so that mutations
+    /// never write to the caller's buffer. On an owned bitmap this is one
+    /// branch. The fallible mutating entry points (`set`, `orInPlace`,
+    /// `compact`) call it themselves; the infallible ones (`remove`,
+    /// `cleanup`, `andInPlace`, `andNotInPlace`) have no error to report the
+    /// copy's allocation failure through, so they assert it has already
+    /// happened — call this first to mutate a borrowed bitmap with them.
+    pub fn ensureOwned(self: *Bitmap) !void {
+        if (self.owned) return;
+        const out =
+            try self.allocator.alignedAlloc(u16, .@"8", self.data.len);
+        @memcpy(out, self.data);
+        self.data = out.ptr[0..out.len];
+        self.cap = out.len;
+        self.owned = true;
+    }
+
     /// The capacity to allocate for a buffer that must hold `needed` u16s.
     /// Lifted from std.array_list.growCapacity, including its 1.5x factor and
     /// its one-cache-line floor.
@@ -175,18 +204,15 @@ pub const Bitmap = struct {
     /// positions in the new allocation, so the tail is copied once rather than
     /// copied whole and then scooted.
     fn scootRight(self: *Bitmap, offset: usize, by_size: usize) !void {
+        assert(self.owned); // every mutation begins with ensureOwned
         const old_len = self.data.len;
         const to_size = old_len + by_size;
         assert(offset <= old_len);
 
         if (to_size > self.cap) {
             const new_cap = growCapacity(to_size);
-            // A borrowed buffer belongs to the caller: it may be neither
-            // remapped nor freed, only copied out of.
-            const grown = if (self.owned)
-                self.allocator.remap(self.data.ptr[0..self.cap], new_cap)
-            else
-                null;
+            const grown =
+                self.allocator.remap(self.data.ptr[0..self.cap], new_cap);
 
             stats.bump(&self.counters, .buffer_grows, 1);
             if (grown) |m| {
@@ -201,10 +227,9 @@ pub const Bitmap = struct {
                     out[offset + by_size ..][0 .. old_len - offset],
                     self.data[offset..old_len],
                 );
-                if (self.owned) self.allocator.free(self.data.ptr[0..self.cap]);
+                self.allocator.free(self.data.ptr[0..self.cap]);
                 self.data = out.ptr[0..to_size];
                 self.cap = new_cap;
-                self.owned = true;
                 // The hole is the only part of the new buffer nothing was
                 // copied into, and allocators do not zero for us.
                 @memset(self.data[offset..][0..by_size], 0);
@@ -239,6 +264,9 @@ pub const Bitmap = struct {
     /// dead slots exceed the `max_dead_divisor` bound — after which every
     /// offset the caller holds may have moved.
     fn markDead(self: *Bitmap, offset: usize) void {
+        // The dead slot may be exactly what the cursor points at, and the
+        // cleanup below can move every other container besides.
+        self.cursor = null;
         const sz = self.data[offset];
         @memset(self.data[offset + 1 ..][0 .. sz - 1], 0);
         stats.bump(&self.counters, .abandoned_u16, sz);
@@ -305,6 +333,7 @@ pub const Bitmap = struct {
         while (i < ks.numKeys()) : (i += 1) {
             ks.setValAt(i, ks.val(i) + by_size);
         }
+        self.cursor = null; // every offset just moved
         return offset + by_size;
     }
 
@@ -415,16 +444,42 @@ pub const Bitmap = struct {
     // Point operations
     // -----------------------------------------------------------------------
 
-    /// Adds x. Returns true if it was not already present.
+    /// The container offset for `key`, or null when `key` has no container.
+    /// Answers from the cursor when it holds `key`; otherwise searches the
+    /// keys node and leaves the cursor pointing at what it found.
+    fn getOffset(self: *Bitmap, key: u64) ?usize {
+        if (self.cursor) |c| {
+            if (c.key == key) {
+                stats.bump(&self.counters, .cursor_hits, 1);
+                return c.offset;
+            }
+        }
+        const off = self.keys().getValue(key) orelse return null;
+        self.cursor = .{ .key = key, .offset = off };
+        return off;
+    }
+
+    /// `getOffset`, creating a minimum-size container for `key` when it has
+    /// none.
+    fn getOrCreateOffset(self: *Bitmap, key: u64) !usize {
+        if (self.getOffset(key)) |off| return off;
+        const fresh = try self.newContainer(container.min_size);
+        // setKey nulls the cursor when inserting the key grew the node, so
+        // the cursor is refilled after it, with the adjusted offset.
+        const off = try self.setKey(key, fresh);
+        self.cursor = .{ .key = key, .offset = off };
+        return off;
+    }
+
+    /// Adds x. Returns true if it was not already present. On a bitmap
+    /// opened with `fromBuffer`, the first mutation copies the buffer out;
+    /// see `ensureOwned`.
     pub fn set(self: *Bitmap, x: u64) !bool {
+        try self.ensureOwned();
         stats.bump(&self.counters, .sets, 1);
         const key = x & key_mask;
         const lo: u16 = @truncate(x);
-
-        const offset = self.keys().getValue(key) orelse blk: {
-            const fresh = try self.newContainer(container.min_size);
-            break :blk try self.setKey(key, fresh);
-        };
+        const offset = try self.getOrCreateOffset(key);
 
         const c = self.getContainer(offset);
         switch (container.getType(c)) {
@@ -447,8 +502,11 @@ pub const Bitmap = struct {
     }
 
     /// Removes x. Returns true if it was present. Never shrinks the buffer.
+    /// Asserts an owned buffer: to remove from a bitmap opened with
+    /// `fromBuffer`, call `ensureOwned` first.
     pub fn remove(self: *Bitmap, x: u64) bool {
-        const offset = self.keys().getValue(x & key_mask) orelse return false;
+        assert(self.owned); // infallible: see ensureOwned
+        const offset = self.getOffset(x & key_mask) orelse return false;
         return container.remove(self.getContainer(offset), @truncate(x));
     }
 
@@ -600,11 +658,11 @@ pub const Bitmap = struct {
         return out;
     }
 
-    /// Wraps `buf` in O(1) without copying or validating it. The bitmap may be
-    /// mutated: mutations that do not grow the buffer write through to `buf`,
-    /// and the first growth copies out, leaving `buf` untouched from then on.
-    /// `buf` must outlive the bitmap. Returns a fresh empty bitmap if `buf` is
-    /// too small or oddly sized to be a bitmap at all.
+    /// Wraps `buf` in O(1) without copying or validating it. The bitmap may
+    /// be mutated: the first mutation copies the buffer out (`ensureOwned`),
+    /// so `buf` itself is never written to. Reads are free of any copy. `buf`
+    /// must outlive the bitmap. Returns a fresh empty bitmap if `buf` is too
+    /// small or oddly sized to be a bitmap at all.
     pub fn fromBuffer(allocator: std.mem.Allocator, buf: AlignedU8) !Bitmap {
         if (buf.len % 2 != 0 or buf.len < min_buffer_bytes)
             return init(allocator);
@@ -658,6 +716,7 @@ pub const Bitmap = struct {
     /// the caller asks for it back, so a chain of intersections compacts once
     /// at the end instead of after every step.
     pub fn andInPlace(self: *Bitmap, other: *const Bitmap) void {
+        assert(self.owned); // infallible: see ensureOwned
         // Nothing here grows the buffer, so both key views stay valid.
         const ka = self.keys();
         const kb = other.keys();
@@ -690,6 +749,7 @@ pub const Bitmap = struct {
     /// difference is a subset of self. Keys absent from `other` are untouched.
     /// Like `andInPlace`, it leaves emptied containers for `cleanup`.
     pub fn andNotInPlace(self: *Bitmap, other: *const Bitmap) void {
+        assert(self.owned); // infallible: see ensureOwned
         const ka = self.keys();
         const kb = other.keys();
         var ai: usize = 0;
@@ -723,6 +783,7 @@ pub const Bitmap = struct {
     /// wants the union as a new bitmap should use `Or` or `fastOr`, which size
     /// the keys node for the whole result before creating any of it.
     pub fn orInPlace(self: *Bitmap, other: *const Bitmap) !void {
+        try self.ensureOwned();
         const buf = try self.allocator.alignedAlloc(
             u16,
             .@"8",
@@ -1184,6 +1245,8 @@ pub const Bitmap = struct {
     /// them; walking the buffer left to right instead needs no bookkeeping and
     /// merges neighbouring holes just as well.
     pub fn cleanup(self: *Bitmap) void {
+        assert(self.owned); // infallible: see ensureOwned
+        self.cursor = null; // closing holes moves containers
         // Keys first: while they still point at their own containers, an empty
         // container can be told apart from a live one by its cardinality alone.
         stats.bump(&self.counters, .cleanups, 1);
@@ -1220,6 +1283,7 @@ pub const Bitmap = struct {
     /// O(total values): every container is rewritten, and a bitmap container
     /// that converts is walked bit by bit.
     pub fn compact(self: *Bitmap) !void {
+        try self.ensureOwned();
         // Empty containers and dead slots first; no point measuring them.
         self.cleanup();
 

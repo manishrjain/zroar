@@ -128,6 +128,50 @@ test "counting never changes what is built" {
     try testing.expect(bm.counters.sets == 5000);
 }
 
+test "sequential sets ride the cursor, alternating keys defeat it" {
+    var seq = try Bitmap.init(testing.allocator);
+    defer seq.deinit();
+    for (0..10_000) |i| _ = try seq.set(i);
+    // All 10k values share key 0, so every set after the first is answered
+    // by the cursor, less the few that follow an invalidation (container
+    // growth, cleanup).
+    try testing.expect(seq.counters.cursor_hits > 9_000);
+
+    var alt = try Bitmap.init(testing.allocator);
+    defer alt.deinit();
+    // Perfectly alternating keys never repeat the previous container, so
+    // the cursor never hits.
+    for (0..1000) |i| _ = try alt.set(((i % 2) << 16) | i);
+    try testing.expectEqual(@as(u64, 0), alt.counters.cursor_hits);
+}
+
+test "the cursor never changes what is built" {
+    // Two interleaved keys with bursts long enough to repeat containers and
+    // values chosen to force growth, relocation, and cleanup mid-stream —
+    // each of which must invalidate the cursor rather than leave it stale.
+    var bm = try Bitmap.init(testing.allocator);
+    defer bm.deinit();
+    var ref = std.ArrayListUnmanaged(u64).empty;
+    defer ref.deinit(testing.allocator);
+
+    var prng = std.Random.DefaultPrng.init(0xC0_C0A);
+    const rnd = prng.random();
+    for (0..8) |burst| {
+        const key: u64 = (burst % 2) << 16;
+        for (0..2000) |_| {
+            const x = key | rnd.int(u16);
+            if (try bm.set(x)) try ref.append(testing.allocator, x);
+        }
+    }
+    try testing.expect(bm.counters.cursor_hits > 0);
+    try testing.expect(bm.counters.container_relocs > 0);
+
+    std.mem.sort(u64, ref.items, {}, std.sort.asc(u64));
+    const got = try bm.toArray(testing.allocator);
+    defer testing.allocator.free(got);
+    try testing.expectEqualSlices(u64, ref.items, got);
+}
+
 test "compact reports a cleanup" {
     var bm = try Bitmap.init(testing.allocator);
     defer bm.deinit();

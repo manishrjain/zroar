@@ -787,34 +787,69 @@ test "fromBuffer rejects buffers too small to be a bitmap" {
     try testing.expect(c.owned and c.isEmpty());
 }
 
-test "mutating a borrowed bitmap without growth writes through" {
+test "mutating a borrowed bitmap copies out, even without growth" {
     var src = try Bitmap.init(testing.allocator);
     defer src.deinit();
-    // Two values, so that key 0's container still has room for a third
-    // whatever container.min_size is: it is a power of two above the 4-u16
-    // header, so the smallest container has at least four slots and three
-    // values never fill it.
     _ = try src.set(1);
     _ = try src.set(2);
 
     const buf = try src.toBufferCopy(testing.allocator);
     defer testing.allocator.free(buf);
+    const pristine = try testing.allocator.dupe(u8, buf);
+    defer testing.allocator.free(pristine);
 
     {
-        // Key 0's array container has a free slot, so this set never grows.
+        // Key 0's array container has a free slot, so this set would fit in
+        // place — the copy must happen anyway, because a mutation may never
+        // write to the caller's buffer.
         var view = try Bitmap.fromBuffer(testing.allocator, buf);
         defer view.deinit();
-        const cap_before = view.cap;
         try testing.expect(try view.set(3));
-        try testing.expect(!view.owned); // no copy-out happened
-        try testing.expectEqual(cap_before, view.cap);
+        try testing.expect(view.owned);
+        try testing.expect(view.contains(3));
+        try testing.expectEqual(@as(u64, 3), view.getCardinality());
     }
 
-    // The change is visible in the caller's buffer.
+    // The caller's buffer still reads back as the original two values.
+    try testing.expectEqualSlices(u8, pristine, buf);
     var again = try Bitmap.fromBuffer(testing.allocator, buf);
     defer again.deinit();
-    try testing.expect(again.contains(3));
-    try testing.expectEqual(@as(u64, 3), again.getCardinality());
+    try testing.expect(!again.contains(3));
+    try testing.expectEqual(@as(u64, 2), again.getCardinality());
+}
+
+test "reads on a borrowed bitmap never copy" {
+    var src = try Bitmap.init(testing.allocator);
+    defer src.deinit();
+    for (0..100) |i| _ = try src.set(i * 7);
+
+    const buf = try src.toBufferCopy(testing.allocator);
+    defer testing.allocator.free(buf);
+
+    var view = try Bitmap.fromBuffer(testing.allocator, buf);
+    defer view.deinit();
+    for (0..100) |i| try testing.expect(view.contains(i * 7));
+    try testing.expectEqual(@as(u64, 100), view.getCardinality());
+    try testing.expect(!view.owned);
+}
+
+test "ensureOwned unlocks the infallible mutators on a borrowed bitmap" {
+    var src = try Bitmap.init(testing.allocator);
+    defer src.deinit();
+    for (0..10) |i| _ = try src.set(i);
+
+    const buf = try src.toBufferCopy(testing.allocator);
+    defer testing.allocator.free(buf);
+    const pristine = try testing.allocator.dupe(u8, buf);
+    defer testing.allocator.free(pristine);
+
+    var view = try Bitmap.fromBuffer(testing.allocator, buf);
+    defer view.deinit();
+    try view.ensureOwned();
+    try testing.expect(view.remove(3));
+    try testing.expect(!view.contains(3));
+    try testing.expectEqual(@as(u64, 9), view.getCardinality());
+    try testing.expectEqualSlices(u8, pristine, buf);
 }
 
 test "growing a borrowed bitmap copies out and leaves the buffer untouched" {
@@ -832,8 +867,8 @@ test "growing a borrowed bitmap copies out and leaves the buffer untouched" {
     defer view.deinit();
     try testing.expect(!view.owned);
 
-    // A brand new key allocates a container, which grows the buffer before
-    // anything is written, so the borrowed buffer is never touched.
+    // A brand new key allocates a container, so this mutation also grows;
+    // the copy-out happens up front either way.
     try testing.expect(try view.set(1 << 48));
     try testing.expect(view.owned);
 
