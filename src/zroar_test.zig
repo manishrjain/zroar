@@ -1139,6 +1139,80 @@ test "And of disjoint bitmaps leaves only key 0" {
     try expectAndIsCompact(&got);
 }
 
+test "Or sizes each result container to the result" {
+    // Two arrays whose counts together pass the array ceiling but which mostly
+    // overlap: the union is built bitmap-shaped and must still land as an
+    // array, sized for itself.
+    const n = 2000; // 2n past the ceiling, the 2500-value union under it
+    comptime std.debug.assert(2 * n > container.max_array_values);
+    comptime std.debug.assert(container.arraySizeFor(n + n / 4) != null);
+    var a = try Bitmap.init(testing.allocator);
+    defer a.deinit();
+    var i: u64 = 0;
+    while (i < n) : (i += 1) _ = try a.set(i);
+    var b = try Bitmap.init(testing.allocator);
+    defer b.deinit();
+    i = n / 4;
+    while (i < n / 4 + n) : (i += 1) _ = try b.set(i);
+    try testing.expectEqual(container.Type.array, containerTypeOf(&a, 0));
+    try testing.expectEqual(container.Type.array, containerTypeOf(&b, 0));
+
+    var got = try Bitmap.Or(testing.allocator, &a, &b);
+    defer got.deinit();
+    try testing.expectEqual(@as(u64, n + n / 4), got.getCardinality());
+    try testing.expectEqual(container.Type.array, containerTypeOf(&got, 0));
+    try testing.expectEqual(
+        container.arraySizeFor(n + n / 4).?,
+        container.size(got.getContainer(got.keys().val(0))),
+    );
+    try checkInvariants(&got);
+    try expectAndIsCompact(&got);
+
+    // Disjoint arrays past the ceiling: the union really is a bitmap.
+    var c = try Bitmap.init(testing.allocator);
+    defer c.deinit();
+    i = 10000;
+    while (i < 10000 + n) : (i += 1) _ = try c.set(i);
+    var got2 = try Bitmap.Or(testing.allocator, &a, &c);
+    defer got2.deinit();
+    try testing.expectEqual(@as(u64, 2 * n), got2.getCardinality());
+    try testing.expectEqual(container.Type.bitmap, containerTypeOf(&got2, 0));
+    try checkInvariants(&got2);
+    try expectAndIsCompact(&got2);
+
+    // Keys held by one side only are copied in at their own size, in key
+    // order, and a container that andInPlace emptied contributes neither a
+    // key nor a container. Both mixed-type kernels run under key 0.
+    var dense = try Bitmap.init(testing.allocator);
+    defer dense.deinit();
+    i = 0;
+    while (i < 5000) : (i += 1) _ = try dense.set(i);
+    _ = try dense.set(1 << 32);
+    _ = try dense.set(3 << 32);
+    var sparse = try testBitmap(&.{ 5, 4999, 5000, 1 << 16, 1 << 32, 2 << 32 });
+    defer sparse.deinit();
+    sparse.andInPlace(&dense); // empties keys 1<<16 and 2<<32
+    try testing.expectEqual(@as(usize, 4), sparse.keys().numKeys());
+
+    var ra = try testRefSet(&.{ 5, 4999, 1 << 32, 3 << 32 });
+    defer ra.deinit(testing.allocator);
+    i = 0;
+    while (i < 5000) : (i += 1) try ra.put(testing.allocator, i, {});
+
+    for ([_][2]*const Bitmap{ .{ &dense, &sparse }, .{ &sparse, &dense } }) |pair| {
+        var u = try Bitmap.Or(testing.allocator, pair[0], pair[1]);
+        defer u.deinit();
+        try expectSameAs(&ra, &u);
+        try testing.expectEqual(container.Type.bitmap, containerTypeOf(&u, 0));
+        try testing.expectEqual(container.Type.array, containerTypeOf(&u, 1 << 32));
+        try testing.expectEqual(container.Type.array, containerTypeOf(&u, 3 << 32));
+        // Only keys 0, 1<<32 and 3<<32 survive; the emptied ones are gone.
+        try testing.expectEqual(@as(usize, 3), u.keys().numKeys());
+        try checkInvariants(&u);
+        try expectAndIsCompact(&u);
+    }
+}
+
 test "And result round trips through a buffer bit identically" {
     // A result with an array container, a bitmap container and a dropped key.
     var a = try Bitmap.init(testing.allocator);

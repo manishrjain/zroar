@@ -23,6 +23,7 @@ comptime {
 const container = @import("container.zig");
 const keys_mod = @import("keys.zig");
 const stats = @import("stats.zig");
+const zero = @import("zero.zig").zero;
 
 pub const Keys = keys_mod.Keys;
 /// Optional counters for the memory movement this library does; off unless
@@ -114,7 +115,7 @@ pub const Bitmap = struct {
         const cap = node_size + container.min_size;
 
         const buf = try allocator.alignedAlloc(u16, .@"8", cap);
-        @memset(buf, 0);
+        zero(buf);
 
         var bm = Bitmap{
             .data = buf.ptr[0..node_size],
@@ -232,7 +233,7 @@ pub const Bitmap = struct {
                 self.cap = new_cap;
                 // The hole is the only part of the new buffer nothing was
                 // copied into, and allocators do not zero for us.
-                @memset(self.data[offset..][0..by_size], 0);
+                zero(self.data[offset..][0..by_size]);
                 return;
             }
         } else {
@@ -245,7 +246,7 @@ pub const Bitmap = struct {
             self.data[offset + by_size .. to_size],
             self.data[offset..old_len],
         );
-        @memset(self.data[offset..][0..by_size], 0);
+        zero(self.data[offset..][0..by_size]);
     }
 
     /// Appends a zeroed container of `sz` u16s and returns its offset.
@@ -268,7 +269,7 @@ pub const Bitmap = struct {
         // cleanup below can move every other container besides.
         self.cursor = null;
         const sz = self.data[offset];
-        @memset(self.data[offset + 1 ..][0 .. sz - 1], 0);
+        zero(self.data[offset + 1 ..][0 .. sz - 1]);
         stats.bump(&self.counters, .abandoned_u16, sz);
         self.dead += sz;
         if (self.dead * max_dead_divisor > self.data.len) self.cleanup();
@@ -1070,25 +1071,68 @@ pub const Bitmap = struct {
 
     /// a ∪ b as a new bitmap owned by the caller.
     ///
-    /// The two-operand union is just `fastOr` of two inputs, and it has to be:
-    /// unioning `a` and then `b` into a fresh bitmap inserts every key of `b`
-    /// that `a` lacks one at a time, and each insertion memmoves the keys node
-    /// (see `orInPlace`). On key-disjoint operands with half a million keys
-    /// each that quadratic term dominates everything else by two orders of
-    /// magnitude. `fastOr` instead sums the per-key cardinalities of both
-    /// inputs first, builds the whole keys node in one pass, and lets each
-    /// container be created at a size its result already fits in.
+    /// One merge walk over the two key lists, the shape of `And`. The keys
+    /// node is sized for every key of either operand up front, so no key
+    /// insertion ever moves a container (the quadratic term `orInPlace` pays
+    /// on key-disjoint operands). A container only one side has is copied
+    /// straight in; a shared key's containers are unioned into one scratch
+    /// container and appended at the size the result actually needs, as an
+    /// array whenever it fits one — so, unlike a `fastOr` result, nothing here
+    /// is sized for the sum of its inputs and there is no dead space to
+    /// `cleanup` afterwards.
     ///
-    /// Like any `fastOr` result this one may carry a single container that no
-    /// key points at, left behind when key 0 needed a bigger container than the
-    /// one `init` gave it. That is dead space, not corruption; `cleanup`
-    /// reclaims it.
+    /// This is not `fastOr` of two inputs, though it was once: that pre-sizes
+    /// and lazily unions in two passes through a scratch buffer, which pays
+    /// off across many inputs and merely costs three passes over the output
+    /// for two.
     pub fn Or(
         allocator: std.mem.Allocator,
         a: *const Bitmap,
         b: *const Bitmap,
     ) !Bitmap {
-        return fastOr(allocator, &.{ a, b });
+        var res = try init(allocator);
+        errdefer res.deinit();
+        const ka = a.keys();
+        const kb = b.keys();
+        // Room for every key of either operand: the keys go into a node that
+        // never grows, so no container ever has to move.
+        try res.initSpaceForKeys(
+            ka.numKeys() + kb.numKeys() - countSharedKeys(a, b),
+        );
+
+        // One scratch container per call; a shared key's union cannot be
+        // computed in place, since neither operand may be touched.
+        var scratch: [container.max_size]u16 align(8) = undefined;
+
+        var ai: usize = 0;
+        var bi: usize = 0;
+        while (ai < ka.numKeys() or bi < kb.numKeys()) {
+            const a_left = ai < ka.numKeys();
+            const b_left = bi < kb.numKeys();
+            if (a_left and (!b_left or ka.key(ai) < kb.key(bi))) {
+                const c = a.getContainer(ka.val(ai));
+                if (container.getCardinality(c) > 0)
+                    try res.appendResult(ka.key(ai), c);
+                ai += 1;
+            } else if (b_left and (!a_left or kb.key(bi) < ka.key(ai))) {
+                const c = b.getContainer(kb.val(bi));
+                if (container.getCardinality(c) > 0)
+                    try res.appendResult(kb.key(bi), c);
+                bi += 1;
+            } else {
+                const built = container.containerOrInto(
+                    &scratch,
+                    a.getContainer(ka.val(ai)),
+                    b.getContainer(kb.val(bi)),
+                );
+                // Two emptied containers union to nothing: no key for that.
+                if (container.getCardinality(built) > 0)
+                    try res.appendResult(ka.key(ai), built);
+                ai += 1;
+                bi += 1;
+            }
+        }
+        return res;
     }
 
     /// The union of many bitmaps as a new bitmap owned by the caller. Faster
@@ -1302,7 +1346,7 @@ pub const Bitmap = struct {
 
         const out = try self.allocator.alignedAlloc(u16, .@"8", total);
         errdefer self.allocator.free(out);
-        @memset(out, 0);
+        zero(out);
 
         const p: [*]u64 = @ptrCast(out.ptr);
         const new_ks = Keys{ .n = p[0 .. node_size / 4] };
@@ -1369,7 +1413,7 @@ pub const Bitmap = struct {
         ks.setNumKeys(w);
         // Clear the pair slots that are spare capacity now, keeping the buffer
         // canonical, then drop the tail of the node the pairs no longer need.
-        @memset(self.data[node_header_size + key_pair_size * w .. new_size], 0);
+        zero(self.data[node_header_size + key_pair_size * w .. new_size]);
         self.setNodeSize(new_size);
         self.scootLeft(new_size, by_size);
 

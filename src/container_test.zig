@@ -487,3 +487,24 @@ test "container sizes obey the multiple-of-4 alignment invariant" {
         try testing.expectEqual(@as(u16, 0), sz % 4);
     }
 }
+
+test "zero clears exactly the slice it is given, at every tail length" {
+    const zero = @import("zero.zig").zero;
+    // Lengths cover the 32-byte loop, each of the 16/8-byte steps and the
+    // byte tail, in u16 and u64 units; sentinels either side must survive.
+    inline for (.{ u16, u64 }) |T| {
+        var buf: [80]T = undefined;
+        var n: usize = 0;
+        while (n <= 70) : (n += 1) {
+            @memset(&buf, std.math.maxInt(T));
+            zero(buf[4..][0..n]);
+            for (buf, 0..) |v, i| {
+                const inside = i >= 4 and i < 4 + n;
+                try testing.expectEqual(
+                    if (inside) @as(T, 0) else std.math.maxInt(T),
+                    v,
+                );
+            }
+        }
+    }
+}

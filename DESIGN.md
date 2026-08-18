@@ -258,7 +258,10 @@ Port semantics from `~/source/sroar` (`bitmap.go`, `keys.go`, `container.go`,
    (permanent dead space). Ours: intersection/difference results are subsets
    of the left operand, so compute **in place** in the left container —
    two-pointer writes never overtake reads. No allocation, no orphans.
-7. The 32 MB package-level `empty` zeroing buffer — use `@memset`.
+7. The 32 MB package-level `empty` zeroing buffer — zero in place. Not with
+   `@memset`, though: with libc linked, Zig 0.16 resolves that to compiler_rt's
+   byte-loop `memset` (upstream is fixing it for 0.17), and zroar zeroes every
+   container it creates. `zero.zig` stores 32 bytes a step instead.
 
 `setutil.go`'s `union2by2` / `intersection2by2` (with the 64×-skew galloping
 variant `onesidedgallopingintersect2by2` + `advanceUntil`) are sound; port them
@@ -290,6 +293,7 @@ zroar/
 │   ├── keys.zig         Keys node view + search/set/updateOffsets
 │   ├── container.zig    array + bitmap container kernels, conversions
 │   ├── setutil.zig      union2by2 / intersection2by2 / gallop / difference on []u16
+│   ├── zero.zig         vector zero fill, in place of the slow compiler_rt memset
 │   ├── iterator.zig     forward iterator (next() ?u64)
 │   ├── tests.zig        the single test root: imports every test file below
 │   ├── test_util.zig    shared helpers (checkInvariants, builders, ref sets)

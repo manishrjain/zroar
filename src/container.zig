@@ -20,6 +20,7 @@ const assert = std.debug.assert;
 
 const setutil = @import("setutil.zig");
 const stats = @import("stats.zig");
+const zero = @import("zero.zig").zero;
 
 pub const Type = enum(u16) { array = 0, bitmap = 1 };
 
@@ -166,8 +167,8 @@ pub fn maximum(c: []const u16) u16 {
 pub fn zeroOut(c: []u16) void {
     switch (getType(c)) {
         // Clear the payload too, so the serialized buffer stays canonical.
-        .array => @memset(c[start_idx..][0..getCardinality(c)], 0),
-        .bitmap => @memset(bitmap.words(c), 0),
+        .array => zero(c[start_idx..][0..getCardinality(c)]),
+        .bitmap => zero(bitmap.words(c)),
     }
     setCardinality(c, 0);
 }
@@ -354,7 +355,7 @@ pub const array = struct {
     fn truncate(c: []u16, n: usize) void {
         const old: usize = getCardinality(c);
         assert(n <= old);
-        @memset(c[start_idx + n ..][0 .. old - n], 0);
+        zero(c[start_idx + n ..][0 .. old - n]);
         setCardinality(c, @intCast(n));
     }
 
@@ -430,7 +431,7 @@ pub const array = struct {
     /// must be max_size long and 8-byte aligned; all of it is overwritten.
     pub fn toBitmapInto(buf: []u16, c: []const u16) void {
         assert(buf.len == max_size);
-        @memset(buf, 0);
+        zero(buf);
         buf[index_size] = max_size;
         setType(buf, .bitmap);
 
@@ -453,7 +454,7 @@ pub const array = struct {
         const n = getCardinality(c);
         @memcpy(vals[0..n], values(c));
 
-        @memset(c[start_idx..], 0);
+        zero(c[start_idx..]);
         c[index_size] = max_size;
         setType(c, .bitmap);
 
@@ -696,12 +697,14 @@ pub const bitmap = struct {
             setCardinality(b, invalid_cardinality);
             return;
         }
+        // Branch-free count: whether the bit was new feeds an add rather than
+        // a jump, so a value stream that half hits and half misses costs no
+        // mispredicts.
         var card = getCardinality(b);
         for (vals) |v| {
             const mask = @as(u64, 1) << @truncate(v);
-            if (w[v >> 6] & mask != 0) continue;
+            card += @intFromBool(w[v >> 6] & mask == 0);
             w[v >> 6] |= mask;
-            card += 1;
         }
         setCardinality(b, card);
     }
@@ -765,14 +768,59 @@ pub fn containerAndInto(buf: []u16, a: []const u16, b: []const u16) []u16 {
     };
 }
 
+/// buf := a ∪ b, built out of place: the two-operand union may touch neither
+/// operand. `buf` must be max_size u16s long and 8-byte aligned; it is
+/// overwritten.
+///
+/// Returns the finished container, a slice of `buf`. Array-shaped when two
+/// arrays could not possibly outgrow an array container; bitmap-shaped
+/// otherwise, with its cardinality counted (never the lazy sentinel), so a
+/// bitmap-shaped result that turned out small can still be stored as an
+/// array — as Bitmap.appendResult does. Compare `containerOr`, the in-place
+/// twin behind fastOr, which sizes for the sum of the operands and defers the
+/// count.
+pub fn containerOrInto(buf: []u16, a: []const u16, b: []const u16) []u16 {
+    assert(buf.len == max_size);
+    switch (getType(a)) {
+        .array => switch (getType(b)) {
+            .array => {
+                const combined: usize = getCardinality(a) + getCardinality(b);
+                if (arraySizeFor(combined) == null) {
+                    array.toBitmapInto(buf, a);
+                    bitmap.orArray(buf, b, false);
+                    return buf;
+                }
+                return finishArray(buf, setutil.union2by2(
+                    array.values(a),
+                    array.values(b),
+                    buf[start_idx..],
+                ));
+            },
+            .bitmap => {
+                @memcpy(buf, b);
+                bitmap.orArray(buf, a, false);
+                return buf;
+            },
+        },
+        .bitmap => {
+            @memcpy(buf, a);
+            switch (getType(b)) {
+                .array => bitmap.orArray(buf, b, false),
+                .bitmap => bitmap.orBitmap(buf, b, false),
+            }
+            return buf;
+        },
+    }
+}
+
 /// Wraps the `n` values a kernel has just written into buf's payload as a
 /// finished array container. Every caller above bounds `n` by the cardinality
-/// of an array operand, which the free-slot invariant keeps below the array
-/// ceiling, so an array container always fits.
+/// of an array operand — or, for `containerOrInto`, by the sum of two that
+/// `arraySizeFor` accepted — so an array container always fits.
 fn finishArray(buf: []u16, n: usize) []u16 {
     const sz = arraySizeFor(n).?;
     const out = buf[0..sz];
-    @memset(out[start_idx + n ..], 0);
+    zero(out[start_idx + n ..]);
     out[index_size] = sz;
     setType(out, .array);
     setCardinality(out, @intCast(n));
@@ -859,7 +907,7 @@ pub fn containerOr(
                 );
                 const sz = arraySizeFor(n).?;
                 const out = buf[0..sz];
-                @memset(out[start_idx + n ..], 0);
+                zero(out[start_idx + n ..]);
                 out[index_size] = @intCast(sz);
                 setType(out, .array);
                 setCardinality(out, @intCast(n));
