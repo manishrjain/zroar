@@ -4,9 +4,10 @@ A Zig port of [sroar](https://github.com/dgraph-io/sroar) (serialized roaring
 bitmaps over u64 keys). The defining property: **the on-disk representation is
 the in-memory representation**. Opening a serialized bitmap (`fromBuffer`) is
 O(1) — no parsing, no per-container allocation. This exists to benchmark
-against roaring-zig (CRoaring's `roaring64_bitmap_t`), where every open costs a
-full portable deserialize (~1–2 µs per small bitmap, ≈75–280 `contains`
-calls, measured 2026-08).
+against CRoaring's `roaring64_bitmap_t`, where opening from the portable
+format costs a full deserialize (~1–2 µs per small bitmap, ≈75–280 `contains`
+calls) and even a frozen view is an O(#containers) fix-up pass (measured
+2026-08).
 
 ## Non-negotiable constraints
 
@@ -298,9 +299,13 @@ zroar/
 │   ├── keys_test.zig    /
 │   └── prop_test.zig    property tests vs std.AutoHashMapUnmanaged reference
 └── bench/
-    ├── bench.zig        harness (idioms cloned from roaring-zig/microbench/bench.zig)
-    ├── datasets.zig     realdata loader, synthetic generators, pre-serialization
-    └── difftest.zig     zroar vs roaring64 differential test
+    ├── bench.zig        harness + CRoaring's 64-bit benchmarks ported row for row, plus the open axis
+    ├── datasets.zig     per-file fixtures (realdata / OLTP), synthetic-grid shapes, pre-serialization
+    ├── difftest.zig     zroar vs roaring64 differential test
+    ├── roaring64.zig    hand-declared externs for the slice of CRoaring's roaring64 API used
+    ├── fetch_croaring.sh  clones CRoaring (source + realdata) into /tmp/CRoaring
+    ├── run_all.sh       standard benchmark set → bench/results/*.tsv → BENCHMARKS.md
+    └── report.py        renders --out .tsv files as the Markdown report
 ```
 
 ## Testing strategy
@@ -318,39 +323,80 @@ zroar/
    compare cardinality/min/max/sorted-toArray/iterator; mid-stream
    serialize→reopen→continue mutating (validates copy-on-grow); algebra
    checks for and/or/andNot/fastOr vs reference sets.
-3. Differential test (bench/difftest.zig, links croaring via roaring-zig):
+3. Differential test (bench/difftest.zig, links CRoaring from its checkout):
    identical op streams into zroar and `roaring64.Bitmap64`, compare
    cardinality every 1k ops and full arrays at checkpoints.
 
 ## Benchmarks (bench/bench.zig)
 
-Copy the mechanics of `~/source/roaring-zig/microbench/bench.zig` (proven on
-Zig 0.16): `pub fn main(init: std.process.Init)`, registry of
-`{name, func: *const fn (*const DataSet) u64}`, marker u64 to defeat DCE,
-1 warmup + loop until 1 s wall time via `std.Io.Clock.Timestamp.now(io,
-.awake)`, print `{s:<36}{d:12} ns {d:12}`, `-b` substring filter.
-`std.heap.c_allocator` in measured regions (CRoaring uses libc malloc).
-Seeded `DefaultPrng`, re-initialized per iteration. Build ReleaseFast.
+Principle: a statement about how zroar compares to CRoaring rests on
+CRoaring's own benchmarks, ported row for row, so a reader can hold our
+numbers next to theirs; anything we add is an axis on top of those rows, not
+a bench of our own design. 64-bit only (`roaring64_bitmap_t`), which is what
+zroar is.
 
-Comparison target: roaring64 **portable** serialize/deserialize only (frozen
-formats are out of scope). Datasets: realdata dirs from
-`/tmp/CRoaring/benchmarks/realdata/` (text files of comma-separated u32,
-one bitmap per file; widen values by `| (file_index << 32)` for the union
-bitmap so multi-level keys are exercised) plus seeded synthetic shapes
-(dense∩sparse, 10k×1k sparse merge, sequential dense).
+Three suites, selected with `--suite`, all through one harness (one warm-up
+call, then calls until a per-row budget — 500 ms, Google Benchmark's default
+minimum — is spent, per implementation; markers of every implementation must
+agree before any timing; `std.heap.c_allocator` in measured regions since
+CRoaring mallocs; seeded PRNGs; ReleaseFast forced):
 
-Bench list (U = union of all widened files; suffixes `-zroar` / `-r64`):
-ColdOpen{0,1,16,256} (open pre-serialized U + k contains + close; r64's
-free() inside the measured region), WarmContains (1024 mixed hit/miss
-probes), WarmIterate, WarmCard, Mixed90R10W (open from buffer + 100k ops at
-90% contains / 10% set + close; zroar via fromBufferCopy, r64 via portable
-deserialize), UnionAllSer (open ×k files + union + serialize result),
-Merge10K (fastOr vs folded `_orInPlace` over 10k prebuilt synthetic bitmaps),
-BuildSer (100k random sets then serialize), MemcpyBaseline (memcpy of U's
-buffer, for subtracting pure copy cost).
+1. `realdata` — `microbenchmarks/bench.cpp`, its 64-bit rows over the
+   per-file bitmaps of a CRoaring data set (`run_optimize`d, values as the
+   files hold them): Successive{Intersection,Union}64,
+   Successive{Intersection,Union,Difference}Cardinality64, RandomAccess64,
+   ToArray64, IterateAll64, ComputeCardinality64. Bodies copied line for
+   line. Omitted: RandomAccess64Cpp (their C++ `Roaring64Map`, unreachable
+   from Zig) and every 32-bit row.
+2. `synthetic` — `microbenchmarks/synthetic_bench.cpp`, its `r64*` rows over
+   their grid: ContainsHit/Miss, Insert, Remove, Serialize, Deserialize for
+   count ∈ {1e3,1e4,1e5,1e6} × step ∈ {1, 2^8, …, 2^48} (values `i * step`,
+   wrapping as C does), and ContainsRandom / InsertRemoveRandom under their
+   ten bitmasks. Row `X/c/s` is their `r64X/c/s`. Per-op rows do one pass
+   over the sequence per call and divide by its length. One deliberate
+   departure: a fixed seed instead of `std::random_device`, so both sides
+   see identical values and the marker check can hold.
+3. `cold` — ours: every realdata row again with the bitmaps opened from
+   their serialized form inside the call (`Cold*`), and MixedOLTP (a
+   transaction against a posting-list index: size-weighted open, 90% contains
+   / 10% append, close). This is the axis zroar is designed for.
 
-build.zig wiring for bench/difftest: module for roaring64 rooted at
-`../roaring-zig/src/roaring64.zig`, `addIncludePath(../roaring-zig/croaring)`,
-`addCSourceFile(../roaring-zig/croaring/roaring.c)`, `link_libc = true`, and
-the AVX512 auto-detect block copied from `../roaring-zig/build.zig`. Provide
-`-Droaring-zig=<path>` (default `../roaring-zig`).
+Formats: wherever a buffer is opened or written, r64 gets two columns —
+**portable** (the interchange format; what a store would keep) and
+**frozen** (CRoaring's memory layout written out and viewed in place with
+`frozen_view`, read-only, 64-byte aligned, disclaimed as unstable across
+releases). zroar's format is of the frozen kind — little-endian by
+definition, unversioned, only zroar reads it — so frozen is the like-for-like
+column and portable the deployment-realistic one; both are reported. Frozen
+views are read-only, so MixedOLTP (which appends after opening) has no frozen
+column. Serialized sizes are reported for all three.
+
+Data: `realdata` dirs from `/tmp/CRoaring/benchmarks/realdata/` (text files
+of comma-separated u32, one bitmap per file; `bench/fetch_croaring.sh` fetches
+them with the CRoaring source), or the generated OLTP index (`--oltp`: 200
+Zipf-sized posting lists over 10M auto-increment row-ids; `--oltp-random`:
+the same over row-ids scattered across u64). The synthetic suite builds its
+own shapes per row. Standard set: census1881, census-income, weather_sept_85
+(run containers save CRoaring 1–6% there; on the `_srt` variants and
+wikileaks 64–90%, which would measure run containers, not the layouts) plus
+both OLTP modes.
+
+build.zig wiring for bench/difftest: CRoaring is compiled straight from a
+checkout of its repository (`-Dcroaring=<path>`, default `/tmp/CRoaring`,
+which `bench/fetch_croaring.sh` populates at a pinned tag): every `.c` under
+`<croaring>/src`, found by walking the tree at configure time, with
+`<croaring>/include` on the include path, `link_libc = true`, and CRoaring's
+own AVX512 auto-detect. `bench/roaring64.zig` declares the ~30 functions the
+bench and difftest call as `extern fn` by hand (the headers pull in CRoaring's
+internal container code, which Zig's C translator does not accept, and every
+type crossing is an opaque pointer, integer or bool) and wraps them. The
+CRoaring version is read from the checkout at configure time and handed to the
+bench as the `croaring` options module. With no checkout the `bench`/`difftest`
+steps fail with a pointer to the script; `test` and `searchbench` never look
+for it.
+
+Reporting: `--out <tsv>` writes `meta`/`row` lines; `bench/report.py` renders
+any number of them as one Markdown report (ratios only, synthetic grid
+condensed unless `--full`); `bench/run_all.sh` runs the standard set (the
+realdata sets on which run containers buy CRoaring little — zroar has none —
+plus the OLTP indexes and the synthetic grid) and regenerates BENCHMARKS.md.
