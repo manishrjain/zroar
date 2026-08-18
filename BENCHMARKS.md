@@ -1,280 +1,121 @@
-# zroar vs roaring-zig (CRoaring roaring64) — benchmark results
+# zroar vs CRoaring roaring64
 
-Date: 2026-08-07. Toolchain: Zig 0.16.0, ReleaseFast, x86-64 (no AVX-512, so
-CRoaring ran its AVX2/scalar paths). CRoaring 4.3.9 via the roaring-zig
-wrapper, with `runOptimize()` applied to every roaring64 bitmap (run
-containers enabled — its best case). zroar has no run containers by design.
+Generated 2026-08-17 by `bench/report.py` from `zig build bench --out` files (Zig 0.16.0, CRoaring 5.0.0, ReleaseFast). Ratios; absolute times are in the .tsv files.
 
-Method: `zig build -Doptimize=ReleaseFast bench -- <dataset-dir>` — 1 s
-timing loop per bench, warmup iteration excluded, both libraries driven by
-identical data with setup-time equivalence checks (element-identical union
-content; every zroar/r64 bench pair must return identical markers or the
-harness panics). Harness floor is ~19 ns/iteration; ColdOpen0-zroar measures
-at the floor, i.e. the real open cost is ~1 ns.
+Measured on AMD Ryzen 9 5950X 16-Core Processor; governor powersave, boost on, SMT on, pinned to CPU(s) 3.
+Measured on AMD Ryzen 9 5950X 16-Core Processor; governor performance, boost on, SMT on, pinned to CPU(s) 3.
 
-Datasets: four CRoaring realdata sets (200 files each; union bitmap U built
-from per-file values widened by `file_index << 32` to exercise multi-level
-keys) plus seeded synthetic shapes. Merge10K/Build* are synthetic shapes and
-identical across runs.
+How to read this:
 
-## Results (ratio = r64 time / zroar time; >1 means zroar faster)
+- Every cell is a speed ratio: **CRoaring's time ÷ zroar's time** on the same
+  benchmark. `2.93×` means zroar took a third of the time (zroar 2.93× faster);
+  `0.49×` means zroar took twice as long (zroar 2× slower). **>1 = zroar faster.**
+- The benchmarks are CRoaring's own, ported line for line: `bench.cpp`'s 64-bit
+  rows over the per-file bitmaps of each data set (section *realdata*), and
+  `synthetic_bench.cpp`'s r64 rows over its shape grid (section *synthetic*).
+- Section *cold* is ours: the realdata rows again, but every bitmap is opened
+  from its serialized bytes inside the timed call — what a store does per
+  query. Plus `MixedOLTP`: open one posting list, 90 point reads, 10 appends,
+  close.
+- Where bitmaps are opened or written, CRoaring has two formats and both get
+  a column, written `portable / frozen`. *Portable* is its interchange format
+  (a full parse to open). *Frozen* is its in-memory layout written out and
+  viewed in place, read-only — the same kind of format as zroar's. `MixedOLTP`
+  writes after opening, so it has no frozen column.
+- zroar has no run containers. Data sets where run containers shrink
+  CRoaring's bitmaps a lot are left out of the standard set; the saving is
+  shown per set below.
 
-| Benchmark | census1881 | census-income | wikileaks | weather_sept_85 | synthetic |
+## Data sets
+
+| set | files | values | zroar | r64 portable | run-container saving | r64 frozen |
+|---|---|---|---|---|---|---|
+| census1881 | 200 | 1,003,861 | 2.4 MB | 1.8 MB (0.76× of zroar) | 6% | 1.9 MB (0.80×) |
+| census-income | 200 | 6,922,021 | 2.5 MB | 2.1 MB (0.87× of zroar) | 5% | 2.2 MB (0.89×) |
+| weather_sept_85 | 200 | 12,870,627 | 9.2 MB | 8.3 MB (0.90× of zroar) | 1% | 8.3 MB (0.90×) |
+| oltp | 200 | 2,486,531 | 7.4 MB | 5.0 MB (0.68× of zroar) | 0% | 5.7 MB (0.77×) |
+| oltp-random | 200 | 2,505,315 | 76.5 MB | 52.6 MB (0.69× of zroar) | 0% | 102.5 MB (1.34×) |
+
+## realdata — CRoaring's bench.cpp rows, bitmaps already in memory
+
+Both libraries hold the data set's 200 bitmaps in memory (built once, before timing); each cell is CRoaring's time ÷ zroar's for that benchmark. One column per data set.
+
+| benchmark | census1881 | census-income | weather_sept_85 | oltp | oltp-random |
 |---|---|---|---|---|---|
-| ColdOpen0 (open+close) | ~10,900× | ~14,500× | ~10,800× | ~49,600× | ~6,700× |
-| ColdOpen256 (open+256 reads) | 50× | 158× | 54× | 421× | 68× |
-| WarmContains (1024 probes) | 1.6× | 1.6× | 1.2× | 1.9× | 1.6× |
-| WarmIterate | 7.0× | 7.2× | 10.2× | 6.2× | 7.3× |
-| WarmCardinality | 8.8× | 18.8× | 30.1× | 11.9× | 14.2× |
-| UnionAllSer (200 opens+union+ser) | 4.3× | 2.7× | 20.9× | 2.8× | 2.2× |
-| Merge10K (10k-way union) | 6.1× | 6.3× | 6.3× | 6.2× | 6.1× |
-| BuildSortedSer (100k sorted) | 4.7× | 4.8× | 4.8× | 4.8× | 4.7× |
-| **Mixed90R10W (90% read / 10% random write)** | **0.26×** | **0.28×** | **0.26×** | **0.24×** | **0.39×** |
-| **BuildSer (100k random-order)** | **0.25×** | **0.25×** | **0.25×** | **0.25×** | **0.25×** |
-| Serialized size (zroar/r64) | 1.51× | 1.23× | 4.37× | 1.20× | 1.57× |
+| SuccessiveIntersection64 | 0.87× | 1.30× | 1.53× | 1.41× | 2.43× |
+| SuccessiveIntersectionCardinality64 | 1.18× | 1.42× | 1.35× | 1.16× | 4.89× |
+| SuccessiveUnionCardinality64 | 3.08× | 1.50× | 1.40× | 1.33× | 9.96× |
+| SuccessiveDifferenceCardinality64 | 2.22× | 1.47× | 1.39× | 1.24× | 7.59× |
+| SuccessiveUnion64 | 0.47× | 0.68× | 0.78× | 0.66× | 1.19× |
+| RandomAccess64 | 1.74× | 2.25× | 2.24× | 1.66× | 0.74× |
+| ToArray64 | 1.22× | 1.23× | 1.04× | 0.87× | 11.85× |
+| IterateAll64 | 5.82× | 8.90× | 7.35× | 4.44× | 11.27× |
+| ComputeCardinality64 | 10.17× | 11.40× | 11.92× | 10.37× | 15.85× |
 
-Absolute anchors (census1881, U = 200 files, ~1.0 M values): zroar open ~1 ns
-vs r64 218 µs; a warm `contains` ~19 ns vs ~30 ns; full iterate 740 µs vs
-5.17 ms; U serialized 2.85 MB vs 1.89 MB.
+zroar faster than CRoaring on 38 of 45 cells.
 
-## Reading the numbers
+## cold — the same rows, but every bitmap is opened inside the timed call
 
-**Cold open is the thesis, confirmed.** `fromBuffer` is a pointer
-reinterpretation; roaring64's portable deserialize is O(data) with a per-
-container malloc + ART insert. On weather_sept_85 (12.9 M values) one r64
-open costs ~1 ms — zroar's is free at any size. Even amortized over 256
-point reads per open, zroar stays 50–420× ahead. Break-even is in the tens
-of thousands of reads per open.
+Cells read `portable / frozen`: CRoaring's time opening its bitmaps from that format and doing the work, ÷ zroar's time doing the same from its buffer.
 
-**Warm reads win too, despite CRoaring's SIMD.** Point lookups are memory-
-latency-bound (keys binary search + container probe) — zroar's flat buffer
-beats the ART walk by ~1.2–1.9×. Iteration and cardinality are wider wins:
-no per-container pointer chasing, cardinality is a header sum.
+| benchmark | census1881 | census-income | weather_sept_85 | oltp | oltp-random |
+|---|---|---|---|---|---|
+| ColdSuccessiveIntersection64 | 10.59× / 2.69× | 1.87× / 1.37× | 2.17× / 1.57× | 2.39× / 1.80× | 13.70× / 6.95× |
+| ColdSuccessiveIntersectionCardinality64 | 19.52× / 4.52× | 2.83× / 1.59× | 2.46× / 1.47× | 2.24× / 1.57× | 29.41× / 13.60× |
+| ColdSuccessiveUnionCardinality64 | 19.52× / 5.86× | 2.86× / 1.66× | 2.52× / 1.51× | 2.39× / 1.75× | 34.46× / 18.36× |
+| ColdSuccessiveDifferenceCardinality64 | 19.25× / 5.19× | 2.86× / 1.63× | 2.49× / 1.51× | 2.32× / 1.66× | 32.39× / 16.45× |
+| ColdSuccessiveUnion64 | 0.67× / 0.50× | 0.92× / 0.72× | 0.97× / 0.78× | 0.81× / 0.72× | 1.84× / 1.42× |
+| ColdRandomAccess64 | 90.13× / 17.91× | 55.84× / 7.11× | 140× / 14.21× | 256× / 100× | 23,589× / 8,560× |
+| ColdToArray64 | 3.44× / 3.20× | 1.31× / 1.24× | 1.18× / 1.04× | 2.80× / 1.61× | 56.27× / 27.78× |
+| ColdIterateAll64 | 7.97× / 7.64× | 7.55× / 7.53× | 6.66× / 6.55× | 6.24× / 5.72× | 99.24× / 50.83× |
+| ColdComputeCardinality64 | 144× / 32.77× | 278× / 30.38× | 356× / 39.83× | 103× / 45.90× | 176× / 74.46× |
+| MixedOLTP | 1.76× | 4.11× | 5.67× | 2.39× | 9.10× |
 
-**Bulk ordered writes win.** `fromSortedList` (pre-sized keys node, fill
-left-to-right) builds 4.7× faster than r64's add-loop+runOptimize; `fastOr`
-(all keys first, bitmap containers next, arrays last, lazy cardinality)
-takes the 10k-way union 6× faster.
+zroar faster than CRoaring portable on 46 of 50 cells.
+zroar faster than CRoaring frozen on 41 of 45 cells.
 
-**Random scattered writes lose ~4×, uniformly.** Mixed90R10W and BuildSer
-insert uniformly random values: each new key or container growth memmoves
-everything to its right — O(buffer) per write. This is the structural price
-of the flat layout, not a bug (BuildSortedSer proves it: identical values,
-sorted order, 4.7× win). Workloads with write locality or batched/sorted
-write application sit on the winning side of this line.
+## synthetic — CRoaring's synthetic_bench.cpp rows, generated shapes
 
-**Space costs 1.2–4.4×.** No run containers and no bitmap→array demotion.
-wikileaks (long runs of consecutive ids) is the worst case at 4.4×; typical
-data pays ~20–60%.
+- Each shape is `count` values spaced `step` apart (their `r64X/count/step`).
+- Step 1 packs everything into one dense container; from step 2^16 up every value sits in its own container under its own key.
+- Cells are again CRoaring's time ÷ zroar's, per operation for the Contains rows and per whole build/serialize otherwise.
+- At step 2^48 `count × step` overflows past 65,536 values (in C too), so those cells re-insert the same 65,536 values.
 
-## Verdict for a 90% read / 10% write index workload
+Steps 2^16 and up behave alike, so they share one column showing the range across them (`--full` prints every step). Serialize and Deserialize cells read `portable / frozen`.
 
-If bitmaps are opened per operation (posting-list pattern), zroar wins by
-orders of magnitude — the open cost dominates everything and zroar's is
-zero, while its warm reads are also faster across the board. The losses are
-confined to (a) uniformly random single-value writes into large bitmaps,
-addressable at the storage layer by batching/sorting writes before applying
-them (which Egres's write path would naturally do), and (b) serialized
-size on run-heavy data.
+| benchmark | count | step 1 | step 2^8 | steps 2^16–2^48 |
+|---|---|---|---|---|
+| ContainsHit | 1,000 | 1.24× | 1.31× | 0.92× |
+| ContainsHit | 10,000 | 1.73× | 1.11× | 0.64×–1.07× |
+| ContainsHit | 100,000 | 2.48× | 1.06× | 0.51×–0.80× |
+| ContainsHit | 1,000,000 | 1.87× | 0.97× | 0.61×–0.78× |
+| ContainsMiss | 1,000 | 1.24× | 1.35× | 0.85× |
+| ContainsMiss | 10,000 | 1.74× | 1.09× | 0.66×–0.77× |
+| ContainsMiss | 100,000 | 2.53× | 1.04× | 0.44×–0.69× |
+| ContainsMiss | 1,000,000 | 1.91× | 0.96× | 0.45×–0.70× |
+| Insert | 1,000 | 0.92× | 1.27× | 2.65× |
+| Insert | 10,000 | 1.66× | 1.40× | 2.41× |
+| Insert | 100,000 | 2.59× | 1.32× | 1.51× |
+| Insert | 1,000,000 | 2.91× | 1.58× | 0.71×–0.88× |
+| Remove | 1,000 | 1.89× | 1.79× | 2.88× |
+| Remove | 10,000 | 14.25× | 1.97× | 2.49× |
+| Remove | 100,000 | 6.48× | 2.19× | 1.56×–2.45× |
+| Remove | 1,000,000 | 6.31× | 2.16× | 0.34×–2.25× |
+| Serialize | 1,000 | 1.99× / 2.01× | 4.13× / 3.73× | 42.76×–80.27× / 29.70× |
+| Serialize | 10,000 | 1.64× / 1.46× | 2.53× / 2.08× | 41.44×–80.41× / 29.32× |
+| Serialize | 100,000 | 1.61× / 1.27× | 1.94× / 1.62× | 42.95×–81.81× / 30.45× |
+| Serialize | 1,000,000 | 1.30× / 1.26× | 1.94× / 1.55× | 14.43×–82.34× / 10.51×–32.36× |
+| Deserialize | 1,000 | 5.96× / 2.38× | 14.61× / 5.52× | 3,034×–4,054× / 1,576× |
+| Deserialize | 10,000 | 50.24× / 2.40× | 136× / 49.72× | 31,476×–40,929× / 14,977× |
+| Deserialize | 100,000 | 102× / 3.78× | 1,376× / 654× | 259,448×–404,372× / 94,147×–149,618× |
+| Deserialize | 1,000,000 | 807× / 17.56× | 13,967× / 6,800× | 260,116×–4,523,467× / 99,308×–1,581,697× |
 
-## CRoaring microbenchmark suite (`-b 64-`)
+Random values under ten bitmasks (numbered as CRoaring numbers them). Masks 1, 2, 3, 5, 6 and 8 have no bits below bit 16, so every value lands in its own container:
 
-The same harness also replicates the 64-bit CRoaring microbenchmarks
-(as mirrored by roaring-zig/microbench; r64 columns verified within 6% of
-that harness on 9 of 10 benches). Per-file bitmaps are loaded unwidened,
-exactly as the microbench does. Ratio > 1 = zroar faster.
+| benchmark \ mask | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| ContainsRandom | 1.51× | 1.25× | 1.21× | 1.14× | 0.87× | 1.20× | 1.57× | 1.13× | 2.01× | 1.34× |
+| InsertRemoveRandom | 1.59× | 0.38× | 0.31× | 0.34× | 0.96× | 0.39× | 0.35× | 1.21× | 0.41× | 1.40× |
 
-| Benchmark | census1881 | wikileaks | Notes |
-|---|---|---|---|
-| SuccessiveIntersection64 | 0.73× | 0.87× | pairwise materialized ∩ (after output-proportional And; was 0.10×/0.37×) |
-| SuccessiveIntersectionCardinality64 | 0.08× | 0.28× | ¹ API gap |
-| SuccessiveUnionCardinality64 | 0.03× | 0.22× | ¹ API gap |
-| SuccessiveDifferenceCardinality64 | 0.25× | 0.76× | ¹ API gap (clone) |
-| SuccessiveUnion64 | 0.30× | 0.72× | pairwise materialized ∪ |
-| TotalUnion64 | 4.5× | 20.9× | ² fastOr vs orInPlace fold |
-| RandomAccess64 | 2.4× | 1.8× | |
-| ToArray64 | 0.15× | 1.9× | ³ no bulk unpack |
-| IterateAll64 | 6.1× | 8.4× | |
-| ComputeCardinality64 | 7.2× | 21.1× | |
-
-Skipped: RankManySlow (zroar has no rank), TotalUnionHeap (no 64-bit
-or-many on either side).
-
-¹ CRoaring's `*_cardinality` calls count the result without materializing
-it; zroar has no fused variants, so it materializes + counts + frees (the
-difference additionally clones the left operand). The zroar bodies of
-`SuccessiveIntersection64` and `SuccessiveIntersectionCardinality64` are
-identical — these rows measure a missing API, not the data structure.
-Cardinality-only kernels (walk both key lists, count matches per container,
-zero allocation) would be a small, readable addition and would close most
-of this gap.
-² Flatters zroar: the 64-bit C API has no or-many, so r64 folds 199
-sequential `_orInPlace` calls where zroar uses pre-sized `fastOr`.
-³ ~90% of ToArray64-zroar is iterator traversal; a bulk unpack-into-buffer
-would close it. The two-operand `Or` could also adopt fastOr's pre-sizing
-strategy instead of clone-then-merge.
-
-**Takeaway:** on pairwise materialized set operations over small bitmaps —
-CRoaring's strongest suit and its SIMD kernels' best case — zroar was
-initially 1.4–10× slower. Rewriting two-operand `And` to be
-output-proportional (count matching keys, pre-size the keys node,
-intersect into scratch, emit only non-empty exactly-sized containers,
-no cleanup pass) closed its gap to 1.15–1.38×, confirming the earlier
-deficit was materialization overhead, not the flat layout. The remaining
-red rows are the unimplemented fused-cardinality APIs (deliberately
-skipped), `Or` (fastOr-strategy rewrite is the known fix), and bulk
-toArray. Aggregate unions, point reads, iteration, and cardinality remain
-zroar wins even on this suite.
-
-Bug found by this work: `@popCount` on `@Vector(8, u64)` yields u7 lanes,
-and an unwidened `@reduce(.Add, ...)` sums modulo 128 — three in-place
-kernels wrote wrapped cardinalities on dense chunks (worst case: cleanup()
-deleting live containers). Fixed with a widening cast + a dense-range
-regression test; randomized tests never produced a 128-bit chunk, which is
-why it survived until a dense benchmark diffed against CRoaring.
-
-## OLTP index datasets (`--oltp`, `--oltp-random`) — the decision benchmark
-
-Synthetic OLTP secondary index: 200 Zipf-sized posting lists (500k down to
-~1.7k row-ids, 2.5M total) over a 10M-row table. `--oltp` = dense
-auto-increment row-ids; `--oltp-random` = scattered random u64 (UUID-style).
-Scattered bits mean run containers stop subsidizing CRoaring. `MixedOLTP`
-models a transaction: open a size-weighted posting list from its serialized
-buffer, 90% point reads, 10% appends of monotonically fresh row-ids, close.
-Ratio > 1 = zroar faster.
-
-| benchmark | oltp (dense ids) | oltp-random (u64 ids) |
-|---|---|---|
-| ColdOpen0 / ColdOpen256 | 8,342× / 98× | ~17,000,000× / 67,594× |
-| WarmContains / Iterate / Card | 1.4× / 7.4× / 16.7× | 1.7× / 4.1× / 3.8× |
-| Mixed90R10W (uniform-random writes) | 0.43× | 0.06× |
-| **MixedOLTP (append writes)** | **2.13×** | 0.83× |
-| SuccessiveIntersection64 | 0.35× | 2.34× |
-| TotalUnion64 / UnionAllSer / Merge10K | 1.2× / 2.1× / 10.4× | 8.2× / 8.4× / 10.0× |
-| RandomAccess64 | 2.7× | 0.99× |
-| **Serialized size (zroar/r64)** | **1.002×** | **6.55×** |
-
-Three findings that decide the Egres question:
-
-1. **Write shape was the whole story.** Append-shaped writes (how OLTP
-   allocates row-ids) flip the mixed workload from a 2.3× loss to a 2.1×
-   win on the same data — and the flip reproduces on census1881
-   (0.26× → 1.58×) and synthetic (0.39× → 10×). The uniform-random write
-   loss in Mixed90R10W was a worst case that OLTP index maintenance never
-   exhibits. Mechanically: an append lands at the end of the keys node and
-   container region (no memmove); a random insert memmoves the tail.
-2. **Dense row-ids erase the space penalty**: 1.002× vs CRoaring — run
-   containers buy nothing on auto-increment posting lists.
-3. **Scattered (UUID-style) row-ids are zroar's structural worst case**:
-   ~2.5M near-unique 48-bit keys × 128-byte minimum container = 6.55×
-   the space (360 MB vs 55 MB), which in turn erases the open advantage
-   in MixedOLTP (0.83×) because every transaction memcpys a 6.5× larger
-   buffer. If keys are UUID-derived, zroar needs a smaller minimum
-   container (or key-prefix compression) before it makes sense.
-
-Also surfaced: two-operand `Or` has an O(n·m) cliff on key-disjoint
-operands (23.9 s vs r64's 127 ms at ~500k disjoint keys each — per-key
-`moveRight` memmoves). `fastOr` is immune (8.2× win on the same data), so
-the known "reimplement Or via fastOr's pre-sizing" fix is now the single
-most actionable item on the list. RandomAccess also shows zroar's point-
-lookup edge is a small-directory edge: dead even at 500k keys.
-
-## Optimization round 2 (2026-08-08): Or via fastOr, min_size = 8, fused counts
-
-Three changes, verified by the full suite + difftest + equivalence checks:
-
-1. **Two-operand `Or` now delegates to `fastOr`** (pre-sized build instead of
-   clone-then-merge). The key-disjoint cliff collapsed: --oltp-random
-   `SuccessiveUnion64` 23.4 s → 649 ms (r64: 596 ms). `orInPlace` is
-   unchanged and documents its many-new-keys cost.
-2. **`container.min_size` is now the one adjustable sizing knob, default 8
-   u16s** (was 64). Scattered-u64 serialized size fell 360 MB → 80 MB (6.55×
-   → **1.45×** of r64), flipping --oltp-random `MixedOLTP` from 0.85× to
-   **14.6× faster** than r64. Dense datasets unchanged (as predicted). Cost,
-   measured and accepted: `BuildSer` (100k uniform-random sets, ~65
-   values/container) regressed 2.14× from extra early growth steps — raise
-   `min_size` to trade back if that pattern ever matters; sorted/bulk builds are
-   unaffected (220 µs).
-3. **Fused `andCardinality`/`orCardinality`/`andNotCardinality`** (count
-   without materializing). All three `Successive*Cardinality64` benches now
-   beat r64 on every dataset — census1881: 15.0/17.4/16.6 µs vs r64's
-   15.9/47.4/33.4 µs; --oltp-random: 9.3× / 4.6× / 7.4× faster.
-
-Behavioural note: `Or`/`fastOr` results may carry one dead 16-byte key-0
-container (bounded, constant, reclaimed exactly by `cleanup()`).
-
-Remaining known gaps after this round: `Mixed90R10W` on scattered data
-(uniform-random `set` pays the same per-new-key memmove `Or` used to — not
-an OLTP write shape, unscheduled), `ToArray64` on dense data (~3×, needs a
-bulk unpack), dense-data `SuccessiveIntersection64` (~3×, CRoaring SIMD +
-run-container kernels on mid-density containers).
-
-## Optimization round 3 (2026-08-08): SIMD block-match intersection
-
-The balanced array∩array core (`localIntersectCore`) gained a portable
-SIMD block phase: all-pairs matching of 8-element blocks via comptime
-rotations (`@Vector(8, u16)`, no asm, no runtime shuffles), `.count` mode
-consuming matches as a popcount, `.materialize` as a ctz-gather; the scalar
-two-pointer loop remains as the tail. Verified by interleaved A/B (5 pairs,
-medians, r64 rows as machine-noise controls, ≤1.4% drift):
-
-- dense `--oltp` SuccessiveIntersection64: 11.05 ms → **2.73 ms (−75%)**,
-  now BEATS r64's 3.70 ms; the Cardinality row 9.98 ms → **2.42 ms**, beats
-  r64's 2.84 ms. The last dense-data intersection gap is closed and inverted.
-- census1881: −9.6% / −7.6%; --oltp-random: −2.1% / −4.7%; no
-  regressions.
-
-The in-place aliasing contract (`andArray` writes over its own left
-operand) was re-proven for the block phase and is covered by a dedicated
-seeded test.
-
-Correctness evidence: 70 unit tests + property tests vs a hashmap reference
-(Debug/ReleaseSafe/ReleaseFast), and a differential test running 810,000
-identical ops through zroar and roaring64 with zero divergence
-(`zig build difftest`); the test suite's sensitivity was itself verified by
-mutation testing (5 injected bugs, 5 caught).
-
-## Optimization round 4 (2026-08-10): growth path — ArrayList techniques,
-## then relocate-on-grow
-
-Two changes, measured separately by interleaved A/B (5 rounds, medians,
-`--oltp-random`).
-
-**4a. `scootRight` reshaped after `std.array_list.addManyAt`** (absorbing
-`fastExpand`): capacity from `growCapacity(needed) = needed + needed/2 + 32`
-(slack guaranteed — the old `cap + max(cap, by)` could land exactly on the
-new length), `allocator.remap` tried before alloc+copy (reaches `realloc`
-for the C allocator; works because our alignment is 8 ≤ max_align_t), and
-on fallback the head and tail are copied straight to their final positions.
-Result: **no measurable wall-clock change** — every bench within the ±5%
-noise floor established by untouched control benches. Kept anyway: it is
-what makes 4b's appends cheap, and serialized bytes are unchanged.
-
-**4b. Relocate-on-grow** (`expandContainer`, `copyAt`): a container that
-must grow mid-buffer is moved to the end and its key repointed, instead of
-memmoving everything behind it at every rung of the size ladder. The old
-slot is zeroed into a canonical empty array container; `Bitmap.dead` tracks
-the debt and the mutating op runs `cleanup` itself once dead slots exceed
-1/4 of the buffer (`max_dead_divisor`), bounding serialized waste at 25%.
-A buffer serialized with dead slots is valid — readers go through keys.
-
-| bench (--oltp-random) | before | after | delta |
-|---|---|---|---|
-| BuildSer-zroar | 46.0 ms | **18.1 ms** | **−60.7%** |
-| WarmContains-zroar | 55.2 µs | **38.7 µs** | **−29.9%** |
-| MixedOLTP-zroar | 127.9 ms | 122.9 ms | −3.9% |
-| Mixed90R10W-zroar | 5.42 s | 5.26 s | −2.9% |
-| everything else | | | within noise |
-
-The scattered-build gap vs r64 (which was 8.2×) is now **3.2×**; the same
-−60% replicates under `--oltp` since BuildSer's shape is mode-independent.
-The WarmContains win is a layout effect: relocation plus periodic
-compaction packs small array containers together instead of interleaving
-them with 8 KB bitmap containers, so random probes touch denser memory.
-Serialized union size is byte-identical (80,170,112 bytes, 1.45×; fastOr
-builds never relocate). Merge10K read +2.9%, inside the noise floor.
-
-Correctness: 4 new tests (mid-buffer relocation, mid-buffer array→bitmap
-conversion, the dead-space bound checked after every one of 6,000 sets plus
-a round-trip with dead slots present, borrowed-buffer copy-out), 97 tests
-green in Debug and ReleaseFast, difftest 810,000 ops with zero divergence.
+zroar faster than CRoaring (portable where a format is involved) on 133 of 188 rows.
+zroar faster than CRoaring frozen on 56 of 56 rows.

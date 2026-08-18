@@ -1,0 +1,63 @@
+meta	zig	0.16.0
+meta	croaring	5.0.0
+meta	cpu	AMD Ryzen 9 5950X 16-Core Processor
+meta	governor	performance
+meta	boost	on
+meta	smt	on
+meta	cpus	3
+meta	dataset	census1881
+meta	mode	realdata
+meta	files	200
+meta	values	1003861
+meta	target_ms	500
+meta	bytes_zroar	2486848
+meta	bytes_r64	1894364
+meta	bytes_r64_norun	2006880
+meta	bytes_r64_frozen	1978112
+row	realdata	SuccessiveIntersection64	zroar	35.77581582713223
+row	realdata	SuccessiveIntersection64	r64	27.833744822979295
+row	realdata	SuccessiveIntersectionCardinality64	zroar	16.339290307823017
+row	realdata	SuccessiveIntersectionCardinality64	r64	19.559346424659676
+row	realdata	SuccessiveUnionCardinality64	zroar	18.575461104093915
+row	realdata	SuccessiveUnionCardinality64	r64	56.70406350646405
+row	realdata	SuccessiveDifferenceCardinality64	zroar	17.74452203846973
+row	realdata	SuccessiveDifferenceCardinality64	r64	40.67260875223686
+row	realdata	SuccessiveUnion64	zroar	1381.0888374655647
+row	realdata	SuccessiveUnion64	r64	668.2475754339118
+row	realdata	RandomAccess64	zroar	2.9298283243192564
+row	realdata	RandomAccess64	r64	5.220495546947597
+row	realdata	ToArray64	zroar	145.69613986013988
+row	realdata	ToArray64	r64	181.8895605674791
+row	realdata	IterateAll64	zroar	1023.0517259713702
+row	realdata	IterateAll64	r64	5910.086505882353
+row	realdata	ComputeCardinality64	zroar	1.7975049323420718
+row	realdata	ComputeCardinality64	r64	17.91708969075859
+row	cold	ColdSuccessiveIntersection64	zroar	48.162217412171245
+row	cold	ColdSuccessiveIntersection64	r64	419.371000838223
+row	cold	ColdSuccessiveIntersection64	r64_frozen	85.69096349614397
+row	cold	ColdSuccessiveIntersectionCardinality64	zroar	17.476275278738946
+row	cold	ColdSuccessiveIntersectionCardinality64	r64	336.3181183591123
+row	cold	ColdSuccessiveIntersectionCardinality64	r64_frozen	77.01508886493146
+row	cold	ColdSuccessiveUnionCardinality64	zroar	19.202113061177464
+row	cold	ColdSuccessiveUnionCardinality64	r64	372.94069500372854
+row	cold	ColdSuccessiveUnionCardinality64	r64_frozen	112.69067883705206
+row	cold	ColdSuccessiveDifferenceCardinality64	zroar	18.496402988939444
+row	cold	ColdSuccessiveDifferenceCardinality64	r64	356.142707977208
+row	cold	ColdSuccessiveDifferenceCardinality64	r64_frozen	94.90260998291896
+row	cold	ColdSuccessiveUnion64	zroar	1456.9278720930233
+row	cold	ColdSuccessiveUnion64	r64	995.9899343936381
+row	cold	ColdSuccessiveUnion64	r64_frozen	739.4022525849335
+row	cold	ColdRandomAccess64	zroar	3.7394134513989123
+row	cold	ColdRandomAccess64	r64	321.94850965250964
+row	cold	ColdRandomAccess64	r64_frozen	62.24674990663513
+row	cold	ColdToArray64	zroar	148.5524872251931
+row	cold	ColdToArray64	r64	502.47666064257027
+row	cold	ColdToArray64	r64_frozen	243.72183333333334
+row	cold	ColdIterateAll64	zroar	778.5116096423017
+row	cold	ColdIterateAll64	r64	6243.72862962963
+row	cold	ColdIterateAll64	r64_frozen	6010.0230357142855
+row	cold	ColdComputeCardinality64	zroar	2.430289942985462
+row	cold	ColdComputeCardinality64	r64	334.0462404809619
+row	cold	ColdComputeCardinality64	r64_frozen	75.75398172205438
+row	cold	MixedOLTP	zroar	1792.1889677419356
+row	cold	MixedOLTP	r64	3109.3907142857142

@@ -4,16 +4,17 @@
     zig build bench -- <data_dir> --out results/census1881.tsv
     zig build bench -- --oltp --out results/oltp.tsv
     zig build bench -- --suite synthetic --out results/synthetic.tsv
-    bench/report.py results/*.tsv > BENCHMARKS.md
+    bench/report.py results/*.tsv > results/report.md
 
 Every cell is a ratio, CRoaring's time over zroar's, so >1 means zroar is
 faster. The synthetic grid is condensed by default: the steps from 2^16 up
 behave alike (one value per key), so they are shown as a range; --full prints
-every cell. Absolute times stay in the .tsv files.
+every cell. Absolute times (microseconds per operation) stay in the .tsv files.
 """
 
 import argparse
 import datetime
+import math
 import os
 import sys
 from collections import OrderedDict, defaultdict
@@ -32,25 +33,41 @@ REALDATA_ROWS = [
 COLD_ROWS = ["Cold" + r for r in REALDATA_ROWS] + ["MixedOLTP"]
 
 COUNTS = [1000, 10000, 100000, 1000000]
-STEPS = [1, 1 << 8, 1 << 16, 1 << 24, 1 << 32, 1 << 40, 1 << 48]
-STEP_LABELS = ["1", "2^8", "2^16", "2^24", "2^32", "2^40", "2^48"]
+# Steps as the bench names them: 1, 2^8, ... 2^48 (CRoaring's rows spell the
+# integer out; ours write the power of two).
+STEPS = ["1", "2^8", "2^16", "2^24", "2^32", "2^40", "2^48"]
+STEP_LABELS = STEPS
 STEPPED = ["ContainsHit", "ContainsMiss", "Insert", "Remove", "Serialize", "Deserialize"]
 MASKED = ["ContainsRandom", "InsertRemoveRandom"]
 
+# Column order for the per-data-set tables; anything else follows, by name.
+DATASET_ORDER = ["census1881", "census-income", "weather_sept_85", "oltp"]
+
 PREAMBLE = """\
-Every cell is CRoaring's time divided by zroar's on the same row, so **>1 means
-zroar is faster**. Rows are CRoaring's own 64-bit benchmarks (`bench.cpp` on
-the per-file bitmaps of each data set; `synthetic_bench.cpp` on its shape
-grid), ported line for line, plus the `cold` suite: the same realdata rows with
-every bitmap opened from its serialized form inside the call, and `MixedOLTP`,
-a posting-list transaction (open, 90 point reads, 10 appends, close).
-Where a buffer is opened or written, CRoaring has two formats and both get a
-column: **portable** (the interchange format; a full parse to open) and
-**frozen** (its memory layout viewed in place, read-only — the class zroar's
-format belongs to). Cells read `portable / frozen`. Frozen views are read-only,
-so `MixedOLTP` has no frozen column. zroar has no run containers, so data sets
-where run containers shrink CRoaring's bitmaps a lot are left out of the
-standard set; the saving is shown per set below.
+How to read this:
+
+- Every cell is a speed ratio: **CRoaring's time ÷ zroar's time** on the same
+  benchmark. `2.93×` means zroar took a third of the time (zroar 2.93× faster);
+  `0.49×` means zroar took twice as long (zroar 2× slower). **>1 = zroar faster.**
+- The benchmarks are CRoaring's own, ported line for line: `bench.cpp`'s 64-bit
+  rows over the per-file bitmaps of each data set (section *realdata*), and
+  `synthetic_bench.cpp`'s r64 rows over its shape grid (section *synthetic*).
+- Section *cold* is ours: the realdata rows again, but every bitmap is opened
+  from its serialized bytes inside the timed call — what a store does per
+  query. Plus `MixedOLTP`: open one posting list, 90 point reads, 10 appends,
+  close.
+- Where bitmaps are opened or written, CRoaring has two formats and both get
+  a column, written `portable / frozen`. *Portable* is its interchange format
+  (a full parse to open). *Frozen* is its in-memory layout written out and
+  viewed in place, read-only — the same kind of format as zroar's. `MixedOLTP`
+  writes after opening, so it has no frozen column.
+- Sizes and serialization are measured on what a store would write: zroar's
+  buffers are compacted first (`compact()`, no growth slack), matching
+  CRoaring's exact portable encoding and the `shrink_to_fit` its frozen
+  format requires. This happens at setup, outside every timing.
+- zroar has no run containers. Data sets where run containers shrink
+  CRoaring's bitmaps a lot are left out of the standard set; the saving is
+  shown per set below.
 """
 
 
@@ -62,8 +79,8 @@ def parse(path):
             if parts[0] == "meta":
                 meta[parts[1]] = parts[2]
             elif parts[0] == "row":
-                _, suite, name, impl, ns = parts
-                rows.setdefault(name, {"suite": suite})[impl] = float(ns)
+                _, suite, name, impl, us = parts
+                rows.setdefault(name, {"suite": suite})[impl] = float(us)
     return meta, rows
 
 
@@ -93,6 +110,47 @@ def fmt_range(rs):
     return f"{fmt(lo)}–{fmt(hi)}"
 
 
+def geomean(rs):
+    rs = [r for r in rs if r is not None and r > 0]
+    if not rs:
+        return None
+    return math.exp(sum(math.log(r) for r in rs) / len(rs))
+
+
+def score(cells, impl):
+    """Geomean of the ratios over `cells` for `impl`, with the spread: "2.1× (0.5–10×)"."""
+    rs = [ratio(c, impl) for c in cells]
+    rs = [r for r in rs if r is not None]
+    if not rs:
+        return None
+    return f"{fmt(geomean(rs))} ({fmt(min(rs))}–{fmt(max(rs))})"
+
+
+def fmt_us(us):
+    if us < 1:
+        return f"{us * 1000:.0f} ns"
+    if us < 1000:
+        return f"{us:.1f} µs"
+    if us < 1e6:
+        return f"{us / 1000:.2f} ms"
+    return f"{us / 1e6:.2f} s"
+
+
+def totals(cells, impls):
+    """Summed time over `cells` per implementation, and the ratio of the sums
+    to zroar's: "zroar 2.4 ms · r64 7.9 ms (3.3×)". Only over cells that have
+    every implementation asked for, so the sums cover the same rows."""
+    cells = [c for c in cells if c is not None and all(i in c for i in ("zroar",) + tuple(impls))]
+    if not cells:
+        return None
+    zr = sum(c["zroar"] for c in cells)
+    parts = [f"zroar {fmt_us(zr)}"]
+    for impl, label in impls.items():
+        t = sum(c[impl] for c in cells)
+        parts.append(f"{label} {fmt_us(t)} ({fmt(t / zr)})")
+    return " · ".join(parts)
+
+
 def both(cell):
     p, f = ratio(cell, "r64"), ratio(cell, "r64_frozen")
     return fmt(p) if f is None else f"{fmt(p)} / {fmt(f)}"
@@ -115,9 +173,11 @@ def main():
     runs = OrderedDict()  # dataset -> (meta, rows), realdata/cold rows keyed by dataset
     synthetic = {}
     versions = set()
+    machines = OrderedDict()  # ordered set of the conditions seen across files
     for path in args.files:
         meta, rows = parse(path)
         versions.add((meta.get("zig", "?"), meta.get("croaring", "?")))
+        machines[tuple(meta.get(k, "unknown") for k in ("cpu", "governor", "boost", "smt", "cpus"))] = None
         ds = meta.get("dataset", os.path.basename(path))
         per_ds = {n: r for n, r in rows.items() if r["suite"] in ("realdata", "cold")}
         if per_ds:
@@ -129,41 +189,94 @@ def main():
             if r["suite"] == "synthetic":
                 synthetic[n] = r
 
+    def order(ds):
+        return (DATASET_ORDER.index(ds), "") if ds in DATASET_ORDER else (len(DATASET_ORDER), ds)
+    runs = OrderedDict(sorted(runs.items(), key=lambda kv: order(kv[0])))
+
     out = []
     p = out.append
     p("# zroar vs CRoaring roaring64")
     p("")
     vs = ", ".join(f"Zig {z}, CRoaring {c}" for z, c in sorted(versions))
     p(f"Generated {datetime.date.today()} by `bench/report.py` from `zig build bench --out` "
-      f"files ({vs}, ReleaseFast). Ratios; absolute times are in the .tsv files.")
+      f"files ({vs}, ReleaseFast). Ratios; absolute times (µs) are in the .tsv files.")
+    p("")
+    for m in machines:
+        p(f"Measured on {m[0]}; governor {m[1]}, boost {m[2]}, SMT {m[3]}, pinned to CPU(s) {m[4]}.")
     p("")
     p(PREAMBLE)
+
+    # Summary: one geometric mean per data set and suite, with the spread. A
+    # geomean lets a 2× win and a 2× loss cancel, which an average of ratios
+    # does not; the spread keeps it from hiding a bad cell.
+    if runs or synthetic:
+        p("## Summary")
+        p("")
+        p("Two views of each table below. *Typical row*: the geometric mean of the "
+          "ratios, min–max in brackets — every benchmark counts the same. *Total "
+          "time*: each library's time summed over the rows, and the ratio of the "
+          "sums — the expensive rows dominate, as they would in a workload. Above 1 "
+          "= zroar faster. An overview only: the tables show where the wins and "
+          "losses actually are.")
+        p("")
+    if runs:
+        p("| set | table | typical row | total time |")
+        p("|---|---|---|---|")
+        for ds, (_, rows) in runs.items():
+            warm = [rows.get(n) for n in REALDATA_ROWS]
+            cold = [rows.get(n) for n in COLD_ROWS]
+            p(f"| {ds} | realdata (in memory) | {score(warm, 'r64') or '–'} | "
+              f"{totals(warm, {'r64': 'r64'}) or '–'} |")
+            p(f"| {ds} | cold, opened portable | {score(cold, 'r64') or '–'} | "
+              f"{totals(cold, {'r64': 'portable'}) or '–'} |")
+            # MixedOLTP has no frozen column, so its sums leave it out on both sides.
+            p(f"| {ds} | cold, opened frozen | {score(cold, 'r64_frozen') or '–'} | "
+              f"{totals(cold, {'r64_frozen': 'frozen'}) or '–'} |")
+        p("")
+    if synthetic:
+        p("| synthetic family | typical row (vs CRoaring; portable where a format is involved) | vs frozen | total time |")
+        p("|---|---|---|---|")
+        fam_scores = []
+        for fam in STEPPED + MASKED:
+            cells = [r for n, r in synthetic.items() if n.split("/")[0] == fam]
+            sp = score(cells, "r64") or "–"
+            sf = score(cells, "r64_frozen") or "–"
+            impls = {"r64": "portable", "r64_frozen": "frozen"} if fam in ("Serialize", "Deserialize") else {"r64": "r64"}
+            g = geomean([ratio(c, "r64") for c in cells])
+            if g is not None:
+                fam_scores.append(g)
+            p(f"| {fam} | {sp} | {sf} | {totals(cells, impls) or '–'} |")
+        if fam_scores:
+            p(f"| **across families** (each weighted equally) | **{fmt(geomean(fam_scores))}** | | |")
+        p("")
 
     if runs:
         p("## Data sets")
         p("")
-        p("| set | files | values | zroar | r64 portable | run-container saving | r64 frozen |")
+        p("| set | bitmaps | values | zroar | r64 portable | run-container saving | r64 frozen |")
         p("|---|---|---|---|---|---|---|")
         for ds, (m, _) in runs.items():
             z, r, nr, fr = (int(m.get(k, 0)) for k in ("bytes_zroar", "bytes_r64", "bytes_r64_norun", "bytes_r64_frozen"))
             saving = f"{(1 - r / nr) * 100:.0f}%" if nr else "–"
-            p(f"| {ds} | {m.get('files', '?')} | {int(m.get('values', 0)):,} | {bytes_h(z)} | "
+            p(f"| {ds} | {m.get('bitmaps', m.get('files', '?'))} | {int(m.get('values', 0)):,} | {bytes_h(z)} | "
               f"{bytes_h(r)} ({r / z:.2f}× of zroar) | {saving} | {bytes_h(fr)} ({fr / z:.2f}×) |")
         p("")
 
-        def table(names, title):
+        def table(names, title, note, labels):
             p(f"## {title}")
             p("")
-            p("| row | " + " | ".join(runs) + " |")
+            p(note)
+            p("")
+            p("| benchmark | " + " | ".join(runs) + " |")
             p("|---|" + "---|" * len(runs))
             for n in names:
                 cells = [both(rows.get(n)) for _, rows in runs.values()]
                 p(f"| {n} | " + " | ".join(cells) + " |")
             p("")
-            wins(names, [rows for _, rows in runs.values()])
+            wins(names, [rows for _, rows in runs.values()], labels)
 
-        def wins(names, tables):
-            for impl, label in (("r64", "portable"), ("r64_frozen", "frozen")):
+        def wins(names, tables, labels):
+            for impl, label in labels:
                 faster = total = 0
                 for rows in tables:
                     for n in names:
@@ -176,15 +289,28 @@ def main():
                     p(f"zroar faster than {label} on {faster} of {total} cells.")
             p("")
 
-        table(REALDATA_ROWS, "realdata — CRoaring bench.cpp, warm per-file bitmaps")
-        table(COLD_ROWS, "cold — the same rows with the open inside the call")
+        table(REALDATA_ROWS, "realdata — CRoaring's bench.cpp rows, bitmaps already in memory",
+              "Both libraries hold the data set's 200 bitmaps in memory (built once, "
+              "before timing); each cell is CRoaring's time ÷ zroar's for that benchmark. "
+              "One column per data set.",
+              [("r64", "CRoaring")])
+        table(COLD_ROWS, "cold — the same rows, but every bitmap is opened inside the timed call",
+              "Cells read `portable / frozen`: CRoaring's time opening its bitmaps from "
+              "that format and doing the work, ÷ zroar's time doing the same from its "
+              "buffer.",
+              [("r64", "CRoaring portable"), ("r64_frozen", "CRoaring frozen")])
 
     if synthetic:
-        p("## synthetic — CRoaring synthetic_bench.cpp, r64 rows")
+        p("## synthetic — CRoaring's synthetic_bench.cpp rows, generated shapes")
         p("")
-        p("`X/count/step` is their `r64X/count/step`: `count` values `i * step`, "
-          "so step 1 is one dense container and step ≥ 2^16 is one value per key. "
-          "At 2^48 the product wraps past 2^64 above 65,536 values, in C as here.")
+        p("- Each shape is `count` values spaced `step` apart (their `r64X/count/step`, "
+          "with the step written as a power of two here).")
+        p("- Step 1 packs everything into one dense container; from step 2^16 up "
+          "every value sits in its own container under its own key.")
+        p("- Cells are again CRoaring's time ÷ zroar's, per operation for the "
+          "Contains rows and per whole build/serialize otherwise.")
+        p("- At step 2^48 `count × step` overflows past 65,536 values (in C too), so "
+          "those cells re-insert the same 65,536 values.")
         p("")
         if args.full:
             for fam in STEPPED:
@@ -199,11 +325,11 @@ def main():
                         p(f"| {c:,} | " + " | ".join(cells) + " |")
                     p("")
         else:
-            p("Steps from 2^16 up behave alike, so they are one column with the "
-              "range across them (`--full` prints every cell). Serialize and "
-              "Deserialize read `portable / frozen`.")
+            p("Steps 2^16 and up behave alike, so they share one column showing the "
+              "range across them (`--full` prints every step). Serialize and "
+              "Deserialize cells read `portable / frozen`.")
             p("")
-            p("| row | count | step 1 | step 2^8 | steps 2^16–2^48 |")
+            p("| benchmark | count | step 1 | step 2^8 | steps 2^16–2^48 |")
             p("|---|---|---|---|---|")
             for fam in STEPPED:
                 for c in COUNTS:
@@ -215,15 +341,16 @@ def main():
                         return pr
                     p(f"| {fam} | {c:,} | {cell(STEPS[:1])} | {cell(STEPS[1:2])} | {cell(STEPS[2:])} |")
             p("")
-        p("Under the ten bitmasks (indexed as their DenseRange does; masks 1, 2, 3, "
-          "5, 6 and 8 have no bits below bit 16, so every value is its own key):")
+        p("Random values under ten bitmasks (numbered as CRoaring numbers them). "
+          "Masks 1, 2, 3, 5, 6 and 8 have no bits below bit 16, so every value "
+          "lands in its own container:")
         p("")
-        p("| row | " + " | ".join(str(i) for i in range(10)) + " |")
+        p("| benchmark \\ mask | " + " | ".join(str(i) for i in range(10)) + " |")
         p("|---|" + "---|" * 10)
         for fam in MASKED:
             p(f"| {fam} | " + " | ".join(fmt(ratio(synthetic.get(f"{fam}/{i}"), "r64")) for i in range(10)) + " |")
         p("")
-        for impl, label in (("r64", "portable"), ("r64_frozen", "frozen")):
+        for impl, label in (("r64", "CRoaring (portable where a format is involved)"), ("r64_frozen", "CRoaring frozen")):
             rs = [ratio(r, impl) for r in synthetic.values()]
             rs = [r for r in rs if r is not None]
             if rs:

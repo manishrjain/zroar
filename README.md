@@ -11,9 +11,9 @@ serialized bitmap is O(1). See DESIGN.md.
 ## Benchmarks against CRoaring (roaring64)
 
     bench/fetch_croaring.sh   # clones CRoaring (source + realdata) into /tmp/CRoaring
-    zig build bench -- <data_dir> [--oltp|--oltp-random] \
+    zig build bench -- <data_dir> [--oltp] \
         [--suite realdata|synthetic|cold]... [-b <substring>] [--time <ms>] [--out <tsv>]
-    bench/run_all.sh          # standard set -> bench/results/*.tsv -> BENCHMARKS.md
+    bench/run_all.sh [-d set]... [-o prefix]   # runs sets, pinned; writes <prefix>-<set>.tsv and <prefix>-report.md
     zig build difftest        # zroar vs roaring64 differential test
 
 `<data_dir>` is any `benchmarks/realdata/<set>` directory of the CRoaring

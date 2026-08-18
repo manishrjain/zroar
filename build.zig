@@ -255,10 +255,17 @@ fn addBench(
         "bench",
         "Run the zroar vs roaring64 benchmarks (pass a data dir after --)",
     );
+    // For a runner that wants to pin or wrap the bench process itself, and
+    // not the compiler: builds the binary into zig-out/bin and stops.
+    const exe_step = b.step(
+        "bench-exe",
+        "Build the bench binary into zig-out/bin without running it",
+    );
     const found = switch (croaring) {
         .found => |f| f,
         .missing => |fail| {
             step.dependOn(&fail.step);
+            exe_step.dependOn(&fail.step);
             return;
         },
     };
@@ -285,6 +292,7 @@ fn addBench(
     const run = b.addRunArtifact(exe);
     if (b.args) |args| run.addArgs(args);
     step.dependOn(&run.step);
+    exe_step.dependOn(&b.addInstallArtifact(exe, .{}).step);
 }
 
 /// Mirrors CRoaring's own CMake option: its AVX512 kernels are compiled in

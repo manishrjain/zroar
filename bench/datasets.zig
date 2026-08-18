@@ -7,13 +7,12 @@
 //! Two kinds of fixture. The per-file set (`files_*`) is what CRoaring's own
 //! microbenchmark loads: one bitmap per input file, values exactly as the file
 //! holds them, `runOptimize` applied on the CRoaring side, as `bench.h` does.
-//! Three input shapes feed it: `realdata`, a directory of CRoaring's benchmark
-//! files (comma-separated u32, one bitmap per file); `--oltp` and
-//! `--oltp-random`, a generated database secondary index, one posting list per
-//! indexed value over one table's row-ids — dense auto-increment ids in the
-//! first, ids scattered over the whole u64 range in the second. That is the
-//! shape the realdata sets do not cover: scattered bits with little for a run
-//! container to find, and writes that append.
+//! Two input shapes feed it: `realdata`, a directory of CRoaring's benchmark
+//! files (comma-separated u32, one bitmap per file); and `--oltp`, a generated
+//! database secondary index, one posting list per indexed value over one
+//! table's auto-increment row-ids. That is the shape the realdata sets do not
+//! cover: scattered bits with little for a run container to find, and writes
+//! that append.
 //!
 //! The other fixture, `Synth`, is one bitmap (per side) of a shape a
 //! synthetic-grid row asks for — `count` values `i * step`, or 2^20 random
@@ -30,8 +29,6 @@ pub const Mode = enum {
     realdata,
     /// Posting lists over auto-increment row-ids.
     oltp,
-    /// Posting lists over row-ids scattered across the whole u64 range.
-    oltp_random,
 };
 
 /// The OLTP modes' index: `oltp_lists` posting lists over a table of
@@ -63,9 +60,10 @@ pub const DataSet = struct {
     /// For a row that has to keep part of itself out of the timing.
     io: std.Io,
 
-    /// The per-file bitmaps, open and never mutated by any row.
-    files_zroar: []zroar.Bitmap,
-    files_r64: []*roaring64.Bitmap64,
+    /// The input bitmaps — one per file of the data set, or per posting list
+    /// of the generated index — open and never mutated by any row.
+    zr_bms: []zroar.Bitmap,
+    r64_bms: []*roaring64.Bitmap64,
 
     /// The same bitmaps serialized: zroar's one format, and CRoaring's two.
     /// The frozen buffers are 64-byte aligned because `frozenView` insists.
@@ -84,11 +82,11 @@ pub const DataSet = struct {
     /// Largest value in any file; RandomAccess64 probes fractions of it.
     max_value: u64,
 
-    /// Running total of the file cardinalities: `file_cum[i]` counts files
+    /// Running total of the input cardinalities: `cum_card[i]` counts inputs
     /// 0..=i. MixedOLTP picks a posting list with probability proportional to
     /// its size by dropping a random point below the last entry and finding the
     /// file it lands in.
-    file_cum: []u64,
+    cum_card: []u64,
 
     /// The row-id space MixedOLTP reads from, inclusive of both ends.
     row_id_max: u64,
@@ -115,20 +113,20 @@ pub const DataSet = struct {
     pub fn deinit(self: *DataSet) void {
         const a = self.allocator;
         self.synth.reset();
-        for (self.files_zroar) |*bm| bm.deinit();
-        for (self.files_r64) |bm| bm.free();
+        for (self.zr_bms) |*bm| bm.deinit();
+        for (self.r64_bms) |bm| bm.free();
         for (self.zr_bufs) |b| a.free(b);
         for (self.r64_portable_bufs) |b| a.free(b);
         for (self.r64_frozen_bufs) |b| a.free(b);
-        a.free(self.files_zroar);
-        a.free(self.files_r64);
+        a.free(self.zr_bms);
+        a.free(self.r64_bms);
         a.free(self.zr_bufs);
         a.free(self.r64_portable_bufs);
         a.free(self.r64_frozen_bufs);
         a.free(self.zr_open);
         a.free(self.r64_open);
         a.free(self.array_buf);
-        a.free(self.file_cum);
+        a.free(self.cum_card);
     }
 };
 
@@ -215,6 +213,9 @@ pub const Synth = struct {
         const zr = &(self.zr orelse unreachable);
         const r64 = self.r64 orelse unreachable;
 
+        // Compacted before serializing, as CRoaring's frozen path shrinks to
+        // fit below and its portable encoding is exact anyway.
+        try zr.compact();
         self.zr_buf = try zr.toBufferCopy(a);
         self.zr_dest = try a.alignedAlloc(u8, .@"8", self.zr_buf.?.len);
 
@@ -276,22 +277,24 @@ pub fn load(
     var prng = std.Random.DefaultPrng.init(seed);
     const rnd = prng.random();
 
-    const files = switch (mode) {
+    // One sorted value list per input: a file of the data set, or a posting
+    // list of the generated index.
+    const inputs = switch (mode) {
         .realdata => try readDataDir(io, allocator, dir_path),
-        .oltp, .oltp_random => try oltpFiles(allocator, rnd, mode),
+        .oltp => try oltpPostingLists(allocator, rnd),
     };
     defer {
-        for (files) |f| allocator.free(f);
-        allocator.free(files);
+        for (inputs) |f| allocator.free(f);
+        allocator.free(inputs);
     }
-    if (files.len == 0) return error.NoInputFiles;
+    if (inputs.len == 0) return error.NoInputs;
 
-    const files_zroar = try allocator.alloc(zroar.Bitmap, files.len);
-    const files_r64 = try allocator.alloc(*roaring64.Bitmap64, files.len);
-    const zr_bufs = try allocator.alloc([]align(8) u8, files.len);
-    const r64_portable_bufs = try allocator.alloc([]u8, files.len);
-    const r64_frozen_bufs = try allocator.alloc([]align(64) u8, files.len);
-    const file_cum = try allocator.alloc(u64, files.len);
+    const zr_bms = try allocator.alloc(zroar.Bitmap, inputs.len);
+    const r64_bms = try allocator.alloc(*roaring64.Bitmap64, inputs.len);
+    const zr_bufs = try allocator.alloc([]align(8) u8, inputs.len);
+    const r64_portable_bufs = try allocator.alloc([]u8, inputs.len);
+    const r64_frozen_bufs = try allocator.alloc([]align(64) u8, inputs.len);
+    const cum_card = try allocator.alloc(u64, inputs.len);
     var max_card: usize = 0;
     var max_value: u64 = 0;
     var running_card: u64 = 0;
@@ -299,22 +302,26 @@ pub fn load(
     var r64_portable_bytes: usize = 0;
     var r64_frozen_bytes: usize = 0;
     var r64_portable_bytes_norun: usize = 0;
-    for (files, 0..) |f, i| {
-        files_zroar[i] = try zroar.Bitmap.fromSortedList(allocator, f);
-        zr_bufs[i] = try files_zroar[i].toBufferCopy(allocator);
+    for (inputs, 0..) |f, i| {
+        // Compacted, as a store would write it: the counterpart of CRoaring's
+        // exact portable encoding and of the shrink_to_fit its frozen format
+        // demands below. Untimed, like theirs.
+        zr_bms[i] = try zroar.Bitmap.fromSortedList(allocator, f);
+        try zr_bms[i].compact();
+        zr_bufs[i] = try zr_bms[i].toBufferCopy(allocator);
 
         // One `add` per value and then `runOptimize`, which is how CRoaring's
         // microbenchmark builds its 64-bit bitmaps.
-        files_r64[i] = try roaring64.Bitmap64.create();
-        for (f) |v| files_r64[i].add(v);
-        r64_portable_bytes_norun += files_r64[i].portableSizeInBytes();
-        _ = files_r64[i].runOptimize();
-        r64_portable_bufs[i] = try allocator.alloc(u8, files_r64[i].portableSizeInBytes());
-        _ = files_r64[i].portableSerialize(r64_portable_bufs[i]);
+        r64_bms[i] = try roaring64.Bitmap64.create();
+        for (f) |v| r64_bms[i].add(v);
+        r64_portable_bytes_norun += r64_bms[i].portableSizeInBytes();
+        _ = r64_bms[i].runOptimize();
+        r64_portable_bufs[i] = try allocator.alloc(u8, r64_bms[i].portableSizeInBytes());
+        _ = r64_bms[i].portableSerialize(r64_portable_bufs[i]);
 
         // The frozen format wants shrink_to_fit first. Done to a copy, so the
         // warm bitmap stays exactly what CRoaring's benchmark would hold.
-        const trimmed = try files_r64[i].copy();
+        const trimmed = try r64_bms[i].copy();
         defer trimmed.free();
         _ = trimmed.shrinkToFit();
         r64_frozen_bufs[i] = try allocator.alignedAlloc(u8, .@"64", trimmed.frozenSizeInBytes());
@@ -329,40 +336,39 @@ pub fn load(
         max_card = @max(max_card, f.len);
         if (f.len > 0) max_value = @max(max_value, f[f.len - 1]);
         running_card += f.len;
-        file_cum[i] = running_card;
+        cum_card[i] = running_card;
     }
 
     // MixedOLTP reads over the whole row-id space and appends above it. The
-    // OLTP modes name that space outright; in realdata the file values are all
+    // OLTP mode names that space outright; in realdata the file values are all
     // there is, so their largest stands in for it.
     const row_id_max: u64 = switch (mode) {
         .oltp => oltp_rows - 1,
-        .oltp_random => std.math.maxInt(u64),
         .realdata => max_value,
     };
     const row_id_next: u64 = switch (mode) {
-        .oltp, .oltp_random => oltp_rows,
+        .oltp => oltp_rows,
         .realdata => max_value + 1,
     };
 
     std.debug.print(
-        "mode: {s}  files: {d}  values: {d}  serialized bytes: zroar {d}  r64 portable {d} (without run containers {d})  r64 frozen {d}\n",
-        .{ @tagName(mode), files.len, running_card, zr_bytes, r64_portable_bytes, r64_portable_bytes_norun, r64_frozen_bytes },
+        "mode: {s}  bitmaps: {d}  values: {d}  serialized bytes: zroar {d}  r64 portable {d} (without run containers {d})  r64 frozen {d}\n",
+        .{ @tagName(mode), inputs.len, running_card, zr_bytes, r64_portable_bytes, r64_portable_bytes_norun, r64_frozen_bytes },
     );
 
     return .{
         .allocator = allocator,
         .io = io,
-        .files_zroar = files_zroar,
-        .files_r64 = files_r64,
+        .zr_bms = zr_bms,
+        .r64_bms = r64_bms,
         .zr_bufs = zr_bufs,
         .r64_portable_bufs = r64_portable_bufs,
         .r64_frozen_bufs = r64_frozen_bufs,
-        .zr_open = try allocator.alloc(zroar.Bitmap, files.len),
-        .r64_open = try allocator.alloc(*roaring64.Bitmap64, files.len),
+        .zr_open = try allocator.alloc(zroar.Bitmap, inputs.len),
+        .r64_open = try allocator.alloc(*roaring64.Bitmap64, inputs.len),
         .array_buf = try allocator.alloc(u64, max_card),
         .max_value = max_value,
-        .file_cum = file_cum,
+        .cum_card = cum_card,
         .row_id_max = row_id_max,
         .row_id_next = row_id_next,
         .values = running_card,
@@ -379,11 +385,11 @@ pub fn load(
 /// cardinalities would not catch a wrong value, so compare the contents,
 /// file by file, warm bitmaps and all three formats.
 pub fn checkFiles(ds: *const DataSet) void {
-    for (ds.files_zroar, 0..) |*zr, i| {
+    for (ds.zr_bms, 0..) |*zr, i| {
         const want = zr.toArray(ds.allocator) catch @panic("out of memory");
         defer ds.allocator.free(want);
 
-        expectR64(ds, ds.files_r64[i], want, i, "warm");
+        expectR64(ds, ds.r64_bms[i], want, i, "warm");
 
         const portable = roaring64.Bitmap64.portableDeserializeSafe(ds.r64_portable_bufs[i]) catch
             std.debug.panic("file {d}: r64 portable buffer does not deserialize", .{i});
@@ -434,19 +440,13 @@ fn expectR64(
 // ---------------------------------------------------------------------------
 
 /// One secondary index: a posting list per indexed value, each holding row-ids
-/// of the same table. `.oltp` gives the table auto-increment row-ids, so the
-/// lists are scattered samples of a 10M-wide range; `.oltp_random` gives it
-/// row-ids derived from something like a UUID, so they span the whole u64 range
-/// and every value tends to land on a 48-bit key of its own.
-fn oltpFiles(allocator: std.mem.Allocator, rnd: std.Random, mode: Mode) ![][]u64 {
-    const max_row_id: u64 = switch (mode) {
-        .oltp => oltp_rows - 1,
-        .oltp_random => std.math.maxInt(u64),
-        .realdata => unreachable, // only the OLTP modes get here
-    };
+/// of the same table, which hands them out by auto-increment, so the lists are
+/// scattered samples of a 10M-wide range.
+fn oltpPostingLists(allocator: std.mem.Allocator, rnd: std.Random) ![][]u64 {
+    const max_row_id: u64 = oltp_rows - 1;
 
-    const files = try allocator.alloc([]u64, oltp_lists);
-    for (files, 0..) |*f, i| {
+    const lists = try allocator.alloc([]u64, oltp_lists);
+    for (lists, 0..) |*f, i| {
         const rank: f64 = @floatFromInt(i + 1);
         const size = @max(
             oltp_min_size,
@@ -459,7 +459,7 @@ fn oltpFiles(allocator: std.mem.Allocator, rnd: std.Random, mode: Mode) ![][]u64
         const vals = randomSortedAtMost(buf, rnd, max_row_id);
         f.* = try allocator.realloc(buf, vals.len);
     }
-    return files;
+    return lists;
 }
 
 /// Reads every `*.txt` in `dir_path` as one bitmap's worth of values.

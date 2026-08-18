@@ -304,7 +304,7 @@ zroar/
     ├── difftest.zig     zroar vs roaring64 differential test
     ├── roaring64.zig    hand-declared externs for the slice of CRoaring's roaring64 API used
     ├── fetch_croaring.sh  clones CRoaring (source + realdata) into /tmp/CRoaring
-    ├── run_all.sh       standard benchmark set → bench/results/*.tsv → BENCHMARKS.md
+    ├── run_all.sh       runs data sets pinned to a CPU → <prefix>-<set>.tsv → <prefix>-report.md
     └── report.py        renders --out .tsv files as the Markdown report
 ```
 
@@ -369,14 +369,17 @@ releases). zroar's format is of the frozen kind — little-endian by
 definition, unversioned, only zroar reads it — so frozen is the like-for-like
 column and portable the deployment-realistic one; both are reported. Frozen
 views are read-only, so MixedOLTP (which appends after opening) has no frozen
-column. Serialized sizes are reported for all three.
+column. Serialized sizes are reported for all three. zroar's per-input
+bitmaps and synthetic shapes are `compact()`ed before their buffers are taken
+(at setup, untimed) — the counterpart of CRoaring's exact portable encoding
+and the `shrink_to_fit` its frozen format demands — so sizes and the
+Serialize row measure what a store would write, not growth slack.
 
 Data: `realdata` dirs from `/tmp/CRoaring/benchmarks/realdata/` (text files
 of comma-separated u32, one bitmap per file; `bench/fetch_croaring.sh` fetches
 them with the CRoaring source), or the generated OLTP index (`--oltp`: 200
-Zipf-sized posting lists over 10M auto-increment row-ids; `--oltp-random`:
-the same over row-ids scattered across u64). The synthetic suite builds its
-own shapes per row. Standard set: census1881, census-income, weather_sept_85
+Zipf-sized posting lists over 10M auto-increment row-ids). The synthetic
+suite builds its own shapes per row. Standard set: census1881, census-income, weather_sept_85
 (run containers save CRoaring 1–6% there; on the `_srt` variants and
 wikileaks 64–90%, which would measure run containers, not the layouts) plus
 both OLTP modes.
@@ -399,4 +402,6 @@ Reporting: `--out <tsv>` writes `meta`/`row` lines; `bench/report.py` renders
 any number of them as one Markdown report (ratios only, synthetic grid
 condensed unless `--full`); `bench/run_all.sh` runs the standard set (the
 realdata sets on which run containers buy CRoaring little — zroar has none —
-plus the OLTP indexes and the synthetic grid) and regenerates BENCHMARKS.md.
+plus the OLTP indexes and the synthetic grid), pinned to one CPU, and writes
+the report next to the results (`-o <prefix>`); BENCHMARKS.md is written by
+hand.

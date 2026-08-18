@@ -42,4 +42,4 @@ fi
 echo "run one with:"
 echo "  zig build$build bench -- $realdata/census1881"
 echo "or a generated OLTP index with no data dir:"
-echo "  zig build$build bench -- --oltp | --oltp-random"
+echo "  zig build$build bench -- --oltp"

@@ -16,9 +16,10 @@
 //!     grid of `count` values `i * step`, and contains / insert+remove under
 //!     ten bitmasks. Their per-op rows do one operation per Google Benchmark
 //!     iteration; here a call does one pass over the whole sequence and the
-//!     time is divided by the pass length, so the columns still read as ns
-//!     per operation. Row `X/c/s` here is their `r64X/c/s`; the `Serialize`
-//!     and `Deserialize` rows carry both of their formats as columns.
+//!     time is divided by the pass length, so the columns still read as time
+//!     per operation. Row `X/count/step` here is their `r64X/count/step`,
+//!     with the step written as a power of two; the `Serialize` and
+//!     `Deserialize` rows carry both of their formats as columns.
 //!
 //! On top of that, one axis of our own (suite `cold`): every realdata row again
 //! with the bitmaps opened from their serialized form inside the measurement
@@ -38,11 +39,12 @@
 //! call, as CRoaring's does under `PauseTiming`) reports that time and it is
 //! subtracted.
 //!
-//! Usage: bench [data_dir] [--oltp|--oltp-random] [--suite <name>]...
+//! Usage: bench [data_dir] [--oltp] [--suite <name>]...
 //!              [-b|--bench <substring>] [--time <ms>] [--out <tsv>]
 //!
 //! `--out` writes the same results as tab-separated lines (`meta key value`
-//! and `row suite name impl ns_per_op`) for bench/report.py to render.
+//! and `row suite name impl us_per_op`) for bench/report.py to render. Times
+//! are microseconds, in the table and in the file.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -161,7 +163,7 @@ const realdata_rows: []const Row = blk: {
 fn warmZroar(comptime op: ZOp) Func {
     return struct {
         fn f(ds: *DataSet) u64 {
-            return op(ds, ds.files_zroar);
+            return op(ds, ds.zr_bms);
         }
     }.f;
 }
@@ -169,27 +171,27 @@ fn warmZroar(comptime op: ZOp) Func {
 fn warmR64(comptime op: ROp) Func {
     return struct {
         fn f(ds: *DataSet) u64 {
-            return op(ds, ds.files_r64);
+            return op(ds, ds.r64_bms);
         }
     }.f;
 }
 
-fn successiveIntersection64Zroar(ds: *const DataSet, files: []zroar.Bitmap) u64 {
+fn successiveIntersection64Zroar(ds: *const DataSet, bms: []zroar.Bitmap) u64 {
     var marker: u64 = 0;
     var i: usize = 0;
-    while (i + 1 < files.len) : (i += 1) {
-        var tmp = zroar.Bitmap.And(ds.allocator, &files[i], &files[i + 1]) catch unreachable;
+    while (i + 1 < bms.len) : (i += 1) {
+        var tmp = zroar.Bitmap.And(ds.allocator, &bms[i], &bms[i + 1]) catch unreachable;
         marker += tmp.getCardinality();
         tmp.deinit();
     }
     return marker;
 }
 
-fn successiveIntersection64R64(_: *const DataSet, files: []const *Bitmap64) u64 {
+fn successiveIntersection64R64(_: *const DataSet, bms: []const *Bitmap64) u64 {
     var marker: u64 = 0;
     var i: usize = 0;
-    while (i + 1 < files.len) : (i += 1) {
-        const tmp = files[i]._and(files[i + 1]) catch unreachable;
+    while (i + 1 < bms.len) : (i += 1) {
+        const tmp = bms[i]._and(bms[i + 1]) catch unreachable;
         marker += tmp.cardinality();
         tmp.free();
     }
@@ -198,89 +200,89 @@ fn successiveIntersection64R64(_: *const DataSet, files: []const *Bitmap64) u64 
 
 /// SuccessiveIntersection64 without the intersection: `andCardinality` counts
 /// the overlap container by container and builds nothing.
-fn successiveIntersectionCardinality64Zroar(_: *const DataSet, files: []zroar.Bitmap) u64 {
+fn successiveIntersectionCardinality64Zroar(_: *const DataSet, bms: []zroar.Bitmap) u64 {
     var marker: u64 = 0;
     var i: usize = 0;
-    while (i + 1 < files.len) : (i += 1) {
-        marker += files[i].andCardinality(&files[i + 1]);
+    while (i + 1 < bms.len) : (i += 1) {
+        marker += bms[i].andCardinality(&bms[i + 1]);
     }
     return marker;
 }
 
-fn successiveIntersectionCardinality64R64(_: *const DataSet, files: []const *Bitmap64) u64 {
+fn successiveIntersectionCardinality64R64(_: *const DataSet, bms: []const *Bitmap64) u64 {
     var marker: u64 = 0;
     var i: usize = 0;
-    while (i + 1 < files.len) : (i += 1) {
-        marker += files[i]._andCardinality(files[i + 1]);
+    while (i + 1 < bms.len) : (i += 1) {
+        marker += bms[i]._andCardinality(bms[i + 1]);
     }
     return marker;
 }
 
 /// |a ∪ b| as |a| + |b| - |a ∩ b|, so no union is ever built.
-fn successiveUnionCardinality64Zroar(_: *const DataSet, files: []zroar.Bitmap) u64 {
+fn successiveUnionCardinality64Zroar(_: *const DataSet, bms: []zroar.Bitmap) u64 {
     var marker: u64 = 0;
     var i: usize = 0;
-    while (i + 1 < files.len) : (i += 1) {
-        marker += files[i].orCardinality(&files[i + 1]);
+    while (i + 1 < bms.len) : (i += 1) {
+        marker += bms[i].orCardinality(&bms[i + 1]);
     }
     return marker;
 }
 
-fn successiveUnionCardinality64R64(_: *const DataSet, files: []const *Bitmap64) u64 {
+fn successiveUnionCardinality64R64(_: *const DataSet, bms: []const *Bitmap64) u64 {
     var marker: u64 = 0;
     var i: usize = 0;
-    while (i + 1 < files.len) : (i += 1) {
-        marker += files[i]._orCardinality(files[i + 1]);
+    while (i + 1 < bms.len) : (i += 1) {
+        marker += bms[i]._orCardinality(bms[i + 1]);
     }
     return marker;
 }
 
 /// |a \ b| as |a| - |a ∩ b|: no clone and no difference, just the two headers
 /// and the overlap.
-fn successiveDifferenceCardinality64Zroar(_: *const DataSet, files: []zroar.Bitmap) u64 {
+fn successiveDifferenceCardinality64Zroar(_: *const DataSet, bms: []zroar.Bitmap) u64 {
     var marker: u64 = 0;
     var i: usize = 0;
-    while (i + 1 < files.len) : (i += 1) {
-        marker += files[i].andNotCardinality(&files[i + 1]);
+    while (i + 1 < bms.len) : (i += 1) {
+        marker += bms[i].andNotCardinality(&bms[i + 1]);
     }
     return marker;
 }
 
-fn successiveDifferenceCardinality64R64(_: *const DataSet, files: []const *Bitmap64) u64 {
+fn successiveDifferenceCardinality64R64(_: *const DataSet, bms: []const *Bitmap64) u64 {
     var marker: u64 = 0;
     var i: usize = 0;
-    while (i + 1 < files.len) : (i += 1) {
-        marker += files[i]._andnotCardinality(files[i + 1]);
+    while (i + 1 < bms.len) : (i += 1) {
+        marker += bms[i]._andnotCardinality(bms[i + 1]);
     }
     return marker;
 }
 
-fn successiveUnion64Zroar(ds: *const DataSet, files: []zroar.Bitmap) u64 {
+fn successiveUnion64Zroar(ds: *const DataSet, bms: []zroar.Bitmap) u64 {
     var marker: u64 = 0;
     var i: usize = 0;
-    while (i + 1 < files.len) : (i += 1) {
-        var tmp = zroar.Bitmap.Or(ds.allocator, &files[i], &files[i + 1]) catch unreachable;
+    while (i + 1 < bms.len) : (i += 1) {
+        var tmp = zroar.Bitmap.Or(ds.allocator, &bms[i], &bms[i + 1]) catch unreachable;
         marker += tmp.getCardinality();
         tmp.deinit();
     }
     return marker;
 }
 
-fn successiveUnion64R64(_: *const DataSet, files: []const *Bitmap64) u64 {
+fn successiveUnion64R64(_: *const DataSet, bms: []const *Bitmap64) u64 {
     var marker: u64 = 0;
     var i: usize = 0;
-    while (i + 1 < files.len) : (i += 1) {
-        const tmp = files[i]._or(files[i + 1]) catch unreachable;
+    while (i + 1 < bms.len) : (i += 1) {
+        const tmp = bms[i]._or(bms[i + 1]) catch unreachable;
         marker += tmp.cardinality();
         tmp.free();
     }
     return marker;
 }
 
-fn randomAccess64Zroar(ds: *const DataSet, files: []zroar.Bitmap) u64 {
+fn randomAccess64Zroar(ds: *const DataSet, bms: []zroar.Bitmap) u64 {
     var marker: u64 = 0;
     const mv = ds.max_value;
-    for (files) |*bm| {
+    for (bms) |*bm| {
         if (bm.contains(mv / 4)) marker += 1;
         if (bm.contains(mv / 2)) marker += 1;
         if (bm.contains(mv - mv / 4)) marker += 1;
@@ -288,10 +290,10 @@ fn randomAccess64Zroar(ds: *const DataSet, files: []zroar.Bitmap) u64 {
     return marker;
 }
 
-fn randomAccess64R64(ds: *const DataSet, files: []const *Bitmap64) u64 {
+fn randomAccess64R64(ds: *const DataSet, bms: []const *Bitmap64) u64 {
     var marker: u64 = 0;
     const mv = ds.max_value;
-    for (files) |bm| {
+    for (bms) |bm| {
         if (bm.contains(mv / 4)) marker += 1;
         if (bm.contains(mv / 2)) marker += 1;
         if (bm.contains(mv - mv / 4)) marker += 1;
@@ -301,9 +303,9 @@ fn randomAccess64R64(ds: *const DataSet, files: []const *Bitmap64) u64 {
 
 /// zroar has no fill-this-buffer variant, so every bitmap costs an allocation
 /// here; r64 unpacks into the buffer set up for it.
-fn toArray64Zroar(ds: *const DataSet, files: []zroar.Bitmap) u64 {
+fn toArray64Zroar(ds: *const DataSet, bms: []zroar.Bitmap) u64 {
     var marker: u64 = 0;
-    for (files) |*bm| {
+    for (bms) |*bm| {
         const arr = bm.toArray(ds.allocator) catch unreachable;
         defer ds.allocator.free(arr);
         if (arr.len > 0) marker += arr[0] & 0xffffffff;
@@ -311,9 +313,9 @@ fn toArray64Zroar(ds: *const DataSet, files: []zroar.Bitmap) u64 {
     return marker;
 }
 
-fn toArray64R64(ds: *const DataSet, files: []const *Bitmap64) u64 {
+fn toArray64R64(ds: *const DataSet, bms: []const *Bitmap64) u64 {
     var marker: u64 = 0;
-    for (files) |bm| {
+    for (bms) |bm| {
         const card = bm.cardinality();
         bm.toUint64Array(ds.array_buf[0..@intCast(card)]);
         if (card > 0) marker += ds.array_buf[0] & 0xffffffff;
@@ -321,18 +323,18 @@ fn toArray64R64(ds: *const DataSet, files: []const *Bitmap64) u64 {
     return marker;
 }
 
-fn iterateAll64Zroar(_: *const DataSet, files: []zroar.Bitmap) u64 {
+fn iterateAll64Zroar(_: *const DataSet, bms: []zroar.Bitmap) u64 {
     var marker: u64 = 0;
-    for (files) |*bm| {
+    for (bms) |*bm| {
         var it = bm.iterator();
         while (it.next()) |_| marker += 1;
     }
     return marker;
 }
 
-fn iterateAll64R64(_: *const DataSet, files: []const *Bitmap64) u64 {
+fn iterateAll64R64(_: *const DataSet, bms: []const *Bitmap64) u64 {
     var marker: u64 = 0;
-    for (files) |bm| {
+    for (bms) |bm| {
         var it = bm.iterator() catch unreachable;
         defer it.free();
         while (it.hasValue()) {
@@ -343,15 +345,15 @@ fn iterateAll64R64(_: *const DataSet, files: []const *Bitmap64) u64 {
     return marker;
 }
 
-fn computeCardinality64Zroar(_: *const DataSet, files: []zroar.Bitmap) u64 {
+fn computeCardinality64Zroar(_: *const DataSet, bms: []zroar.Bitmap) u64 {
     var marker: u64 = 0;
-    for (files) |*bm| marker += bm.getCardinality();
+    for (bms) |*bm| marker += bm.getCardinality();
     return marker;
 }
 
-fn computeCardinality64R64(_: *const DataSet, files: []const *Bitmap64) u64 {
+fn computeCardinality64R64(_: *const DataSet, bms: []const *Bitmap64) u64 {
     var marker: u64 = 0;
-    for (files) |bm| marker += bm.cardinality();
+    for (bms) |bm| marker += bm.cardinality();
     return marker;
 }
 
@@ -367,6 +369,14 @@ fn computeCardinality64R64(_: *const DataSet, files: []const *Bitmap64) u64 {
 
 const grid_counts = [_]usize{ 1_000, 10_000, 100_000, 1_000_000 };
 const grid_steps = [_]u64{ 1, 1 << 8, 1 << 16, 1 << 24, 1 << 32, 1 << 40, 1 << 48 };
+
+/// The step as CRoaring's row names would spell it if they were readable:
+/// `1`, `2^8`, ... rather than `1099511627776`. Their `r64X/c/1099511627776`
+/// is our `X/c/2^40`.
+fn stepLabel(comptime step: u64) []const u8 {
+    if (step == 1) return "1";
+    return std.fmt.comptimePrint("2^{d}", .{@ctz(step)});
+}
 
 // `i * step` wraps past 2^64 once `i` reaches 65536 at the widest step, so the
 // 100k and 1M rows there hold 65536 distinct values, written over and over.
@@ -447,7 +457,7 @@ const synthetic_rows: []const Row = blk: {
         for (grid_counts) |count| {
             for (grid_steps) |step| {
                 out = out ++ &[_]Row{.{
-                    .name = std.fmt.comptimePrint("{s}/{d}/{d}", .{ fam.name, count, step }),
+                    .name = std.fmt.comptimePrint("{s}/{d}/{s}", .{ fam.name, count, stepLabel(step) }),
                     .suite = .synthetic,
                     .variants = fam.variants,
                     .ops = if (fam.per_value) count else 1,
@@ -775,7 +785,7 @@ const open_rows: []const Row = cold_rows ++ &[_]Row{.{
 /// point in the total cardinality, and the first list whose running total is
 /// past it.
 fn pickList(ds: *const DataSet, rnd: std.Random) usize {
-    const cum = ds.file_cum;
+    const cum = ds.cum_card;
     const point = rnd.uintLessThan(u64, cum[cum.len - 1]);
 
     var lo: usize = 0;
@@ -889,15 +899,107 @@ const Options = struct {
     /// What the data source is called in that copy.
     dataset: []const u8,
     mode: datasets.Mode,
+    machine: Machine,
 };
 
-/// Per-row results, in the table's column order.
+/// What the numbers were taken under. Recorded, not enforced: pinning and
+/// frequency policy are the runner's business (bench/run_all.sh pins; the
+/// governor and boost need root and are left to the operator). Linux sysfs
+/// is the source; elsewhere everything reads "unknown".
+const Machine = struct {
+    cpu: []const u8 = "unknown",
+    governor: []const u8 = "unknown",
+    boost: []const u8 = "unknown",
+    smt: []const u8 = "unknown",
+    /// The CPUs this process may run on, as `taskset` would print them.
+    cpus: []const u8 = "unknown",
+
+    fn read(io: std.Io, allocator: std.mem.Allocator) Machine {
+        var m: Machine = .{};
+        if (builtin.os.tag != .linux) return m;
+
+        if (readTrimmed(io, allocator, "/proc/cpuinfo")) |info| {
+            if (std.mem.indexOf(u8, info, "model name")) |i| {
+                const line = info[i..];
+                const colon = std.mem.indexOfScalar(u8, line, ':') orelse 0;
+                const end = std.mem.indexOfScalar(u8, line, '\n') orelse line.len;
+                m.cpu = std.mem.trim(u8, line[colon + 1 .. end], " \t");
+            }
+        }
+
+        var first_cpu: usize = 0;
+        if (std.posix.sched_getaffinity(0)) |set| {
+            m.cpus = formatCpuSet(allocator, set) catch "unknown";
+            first_cpu = firstBit(set);
+        } else |_| {}
+
+        const gov_path = std.fmt.allocPrint(
+            allocator,
+            "/sys/devices/system/cpu/cpu{d}/cpufreq/scaling_governor",
+            .{first_cpu},
+        ) catch "";
+        if (readTrimmed(io, allocator, gov_path)) |g| m.governor = g;
+        if (readTrimmed(io, allocator, "/sys/devices/system/cpu/cpufreq/boost")) |b| {
+            m.boost = if (std.mem.eql(u8, b, "1")) "on" else "off";
+        }
+        if (readTrimmed(io, allocator, "/sys/devices/system/cpu/smt/active")) |v| {
+            m.smt = if (std.mem.eql(u8, v, "1")) "on" else "off";
+        }
+        return m;
+    }
+
+    /// Streamed rather than size-hinted: /proc and /sys files report size 0.
+    fn readTrimmed(io: std.Io, allocator: std.mem.Allocator, path: []const u8) ?[]const u8 {
+        if (path.len == 0) return null;
+        const file = std.Io.Dir.cwd().openFile(io, path, .{}) catch return null;
+        defer file.close(io);
+        var buf: [4096]u8 = undefined;
+        var reader = file.readerStreaming(io, &buf);
+        const bytes = reader.interface.allocRemaining(allocator, .limited(1 << 20)) catch return null;
+        return std.mem.trim(u8, bytes, " \t\r\n");
+    }
+
+    fn firstBit(set: std.posix.cpu_set_t) usize {
+        for (set, 0..) |word, w| {
+            if (word != 0) return w * @bitSizeOf(usize) + @ctz(word);
+        }
+        return 0;
+    }
+
+    /// "3", "0-31", "2,4-7": runs of set bits, comma separated.
+    fn formatCpuSet(allocator: std.mem.Allocator, set: std.posix.cpu_set_t) ![]const u8 {
+        var out: std.ArrayListUnmanaged(u8) = .empty;
+        const total = set.len * @bitSizeOf(usize);
+        var i: usize = 0;
+        while (i < total) : (i += 1) {
+            if (!isSet(set, i)) continue;
+            var j = i;
+            while (j + 1 < total and isSet(set, j + 1)) j += 1;
+            if (out.items.len > 0) try out.append(allocator, ',');
+            var buf: [32]u8 = undefined;
+            const piece = if (j == i)
+                try std.fmt.bufPrint(&buf, "{d}", .{i})
+            else
+                try std.fmt.bufPrint(&buf, "{d}-{d}", .{ i, j });
+            try out.appendSlice(allocator, piece);
+            i = j;
+        }
+        return out.items;
+    }
+
+    fn isSet(set: std.posix.cpu_set_t, i: usize) bool {
+        const bits = @bitSizeOf(usize);
+        return (set[i / bits] >> @intCast(i % bits)) & 1 == 1;
+    }
+};
+
+/// Per-row results, microseconds per operation, in the table's column order.
 const Result = struct {
     row: *const Row,
-    ns: [3]?f64 = .{ null, null, null },
+    us: [3]?f64 = .{ null, null, null },
 
     fn get(self: Result, impl: Impl) ?f64 {
-        return self.ns[@intFromEnum(impl)];
+        return self.us[@intFromEnum(impl)];
     }
 };
 
@@ -935,8 +1037,8 @@ fn run(ds: *DataSet, opts: Options) !void {
 
         var result: Result = .{ .row = row };
         for (row.variants) |v| {
-            const per_call = measure(ds, v.func, opts.target_ns);
-            result.ns[@intFromEnum(v.impl)] = per_call / @as(f64, @floatFromInt(row.ops));
+            const per_call_ns = measure(ds, v.func, opts.target_ns);
+            result.us[@intFromEnum(v.impl)] = per_call_ns / @as(f64, @floatFromInt(row.ops)) / std.time.ns_per_us;
         }
         printResult(result);
         try out.result(result);
@@ -979,9 +1081,14 @@ const Out = struct {
         const w = &self.w.interface;
         try w.print("meta\tzig\t{s}\n", .{builtin.zig_version_string});
         try w.print("meta\tcroaring\t{s}\n", .{croaring.version});
+        try w.print("meta\tcpu\t{s}\n", .{opts.machine.cpu});
+        try w.print("meta\tgovernor\t{s}\n", .{opts.machine.governor});
+        try w.print("meta\tboost\t{s}\n", .{opts.machine.boost});
+        try w.print("meta\tsmt\t{s}\n", .{opts.machine.smt});
+        try w.print("meta\tcpus\t{s}\n", .{opts.machine.cpus});
         try w.print("meta\tdataset\t{s}\n", .{opts.dataset});
         try w.print("meta\tmode\t{s}\n", .{@tagName(opts.mode)});
-        try w.print("meta\tfiles\t{d}\n", .{ds.files_zroar.len});
+        try w.print("meta\tbitmaps\t{d}\n", .{ds.zr_bms.len});
         try w.print("meta\tvalues\t{d}\n", .{ds.values});
         try w.print("meta\ttarget_ms\t{d}\n", .{opts.target_ns / std.time.ns_per_ms});
         try w.print("meta\tbytes_zroar\t{d}\n", .{ds.zr_bytes});
@@ -1002,29 +1109,41 @@ const Out = struct {
 };
 
 fn printHeader(suite: Suite) void {
+    // What the r64 column holds differs per suite: the bitmaps as CRoaring's
+    // bench builds them in memory, or — wherever a buffer is opened or written
+    // — CRoaring through its portable format, with frozen alongside.
     const title: []const u8 = switch (suite) {
-        .realdata => "CRoaring bench.cpp, 64-bit rows (warm per-file bitmaps)",
-        .synthetic => "CRoaring synthetic_bench.cpp, r64 rows (ns per op where the row is per-op)",
-        .cold => "Open axis: realdata rows with the open inside, and MixedOLTP",
+        .realdata => "CRoaring bench.cpp, 64-bit rows (bitmaps in memory; r64 = as CRoaring's bench builds them)",
+        .synthetic => "CRoaring synthetic_bench.cpp, r64 rows (per op where the row is per-op; Serialize/Deserialize: r64 = portable, frozen alongside)",
+        .cold => "Open axis: realdata rows with every bitmap opened inside the call (r64 = via portable deserialize, frozen = via frozen_view), and MixedOLTP",
+    };
+    const r64_label: []const u8 = switch (suite) {
+        .realdata => "r64 µs",
+        .synthetic, .cold => "portable µs",
     };
     std.debug.print("\n{s}\n", .{title});
     std.debug.print("{s:<44}{s:>14}{s:>14}{s:>11}{s:>14}{s:>11}\n", .{
-        "row", "zroar ns", "r64 ns", "r64/zr", "frozen ns", "fr/zr",
+        "row",
+        "zroar µs",
+        r64_label,
+        "r64/zr",
+        "frozen µs",
+        "fr/zr",
     });
     std.debug.print("{s}\n", .{"-" ** 108});
 }
 
 fn printResult(r: Result) void {
     const zr = r.get(.zroar).?;
-    std.debug.print("{s:<44}{d:>14.1}", .{ r.row.name, zr });
+    std.debug.print("{s:<44}{d:>14.3}", .{ r.row.name, zr });
     inline for (.{ Impl.r64, Impl.r64_frozen }) |impl| {
-        if (r.get(impl)) |ns| {
-            const ratio = ns / zr;
+        if (r.get(impl)) |us| {
+            const ratio = us / zr;
             // Two decimals matter around 1x and only clutter at 1000x.
             if (ratio < 100) {
-                std.debug.print("{d:>14.1}{d:>10.2}x", .{ ns, ratio });
+                std.debug.print("{d:>14.3}{d:>10.2}x", .{ us, ratio });
             } else {
-                std.debug.print("{d:>14.1}{d:>10.0}x", .{ ns, ratio });
+                std.debug.print("{d:>14.3}{d:>10.0}x", .{ us, ratio });
             }
         } else {
             std.debug.print("{s:>14}{s:>11}", .{ "-", "" });
@@ -1064,7 +1183,7 @@ fn printSummary(results: []const Result, ds: *const DataSet) void {
 }
 
 const usage =
-    \\usage: bench [data_dir] [--oltp|--oltp-random] [--suite realdata|synthetic|cold]...
+    \\usage: bench [data_dir] [--oltp] [--suite realdata|synthetic|cold]...
     \\             [-b|--bench <substring>] [--time <ms>] [--out <tsv>]
     \\
 ;
@@ -1087,6 +1206,7 @@ pub fn main(init: std.process.Init) !void {
         .out = null,
         .dataset = undefined,
         .mode = undefined,
+        .machine = Machine.read(io, allocator),
     };
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
@@ -1112,8 +1232,6 @@ pub fn main(init: std.process.Init) !void {
             opts.out = args[i];
         } else if (std.mem.eql(u8, a, "--oltp")) {
             mode = .oltp;
-        } else if (std.mem.eql(u8, a, "--oltp-random")) {
-            mode = .oltp_random;
         } else if (a.len > 0 and a[0] == '-') {
             return fail("unknown option");
         } else {
@@ -1125,17 +1243,18 @@ pub fn main(init: std.process.Init) !void {
     opts.dataset = switch (mode) {
         .realdata => std.fs.path.basename(dir_path),
         .oltp => "oltp",
-        .oltp_random => "oltp-random",
     };
 
     const source: []const u8 = switch (mode) {
         .realdata => dir_path,
         .oltp => "oltp (auto-increment row-ids)",
-        .oltp_random => "oltp (scattered u64 row-ids)",
     };
     std.debug.print(
-        "zroar bench: zig {s}, CRoaring {s}\ndata source: {s}\n",
-        .{ builtin.zig_version_string, croaring.version, source },
+        "zroar bench: zig {s}, CRoaring {s}\nmachine: {s}; governor {s}, boost {s}, smt {s}, cpus {s}\ndata source: {s}\n",
+        .{
+            builtin.zig_version_string, croaring.version, opts.machine.cpu,  opts.machine.governor,
+            opts.machine.boost,         opts.machine.smt, opts.machine.cpus, source,
+        },
     );
     var ds = datasets.load(io, allocator, dir_path, mode) catch |err| {
         std.debug.print("failed to load the data set: {s}\n{s}", .{ @errorName(err), usage });
