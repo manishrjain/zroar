@@ -44,6 +44,7 @@ pub const c = struct {
     pub extern fn roaring64_bitmap_or(r1: *const roaring64_bitmap_t, r2: *const roaring64_bitmap_t) ?*roaring64_bitmap_t;
     pub extern fn roaring64_bitmap_or_cardinality(r1: *const roaring64_bitmap_t, r2: *const roaring64_bitmap_t) u64;
     pub extern fn roaring64_bitmap_or_inplace(r1: *roaring64_bitmap_t, r2: *const roaring64_bitmap_t) void;
+    pub extern fn roaring64_bitmap_andnot(r1: *const roaring64_bitmap_t, r2: *const roaring64_bitmap_t) ?*roaring64_bitmap_t;
     pub extern fn roaring64_bitmap_andnot_cardinality(r1: *const roaring64_bitmap_t, r2: *const roaring64_bitmap_t) u64;
     pub extern fn roaring64_iterator_create(r: *const roaring64_bitmap_t) ?*roaring64_iterator_t;
     pub extern fn roaring64_iterator_free(it: *roaring64_iterator_t) void;
@@ -195,6 +196,10 @@ pub const Bitmap64 = opaque {
 
     pub fn _orCardinality(self: *const Bitmap64, other: *const Bitmap64) u64 {
         return c.roaring64_bitmap_or_cardinality(self.raw(), other.raw());
+    }
+
+    pub fn _andnot(self: *const Bitmap64, other: *const Bitmap64) !*Bitmap64 {
+        return wrap(c.roaring64_bitmap_andnot(self.raw(), other.raw()));
     }
 
     pub fn _andnotCardinality(self: *const Bitmap64, other: *const Bitmap64) u64 {

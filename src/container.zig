@@ -163,13 +163,12 @@ pub fn maximum(c: []const u16) u16 {
     };
 }
 
-/// Empties the container, keeping its type and its allocated size.
+/// Empties the container, keeping its type and its allocated size. An array
+/// container is emptied by its cardinality alone — the values it held become
+/// dead bytes — but a bitmap container's payload is the data, so its words
+/// are cleared.
 pub fn zeroOut(c: []u16) void {
-    switch (getType(c)) {
-        // Clear the payload too, so the serialized buffer stays canonical.
-        .array => zero(c[start_idx..][0..getCardinality(c)]),
-        .bitmap => zero(bitmap.words(c)),
-    }
+    if (getType(c) == .bitmap) zero(bitmap.words(c));
     setCardinality(c, 0);
 }
 
@@ -350,12 +349,10 @@ pub const array = struct {
         return vals[vals.len - 1];
     }
 
-    /// Keeps only the first `n` values, clearing the slots beyond them so the
-    /// serialized buffer stays canonical.
+    /// Keeps only the first `n` values; the slots beyond them become dead
+    /// bytes.
     fn truncate(c: []u16, n: usize) void {
-        const old: usize = getCardinality(c);
-        assert(n <= old);
-        zero(c[start_idx + n ..][0 .. old - n]);
+        assert(n <= getCardinality(c));
         setCardinality(c, @intCast(n));
     }
 
@@ -718,9 +715,8 @@ pub const bitmap = struct {
 /// space.
 ///
 /// An intersection is a subset of dst, so a two-pointer rewrite of dst never
-/// overtakes itself. (sroar instead appends a fresh container and orphans the
-/// old one — DESIGN.md, Go bug 6.) A bitmap dst stays a bitmap even when the
-/// result is tiny: DESIGN.md rules out demoting a bitmap to an array.
+/// overtakes itself. A bitmap dst stays a bitmap even when the result is
+/// tiny: DESIGN.md rules out demoting a bitmap to an array.
 pub fn containerAnd(dst: []u16, src: []const u16) void {
     switch (getType(dst)) {
         .array => switch (getType(src)) {
@@ -820,7 +816,6 @@ pub fn containerOrInto(buf: []u16, a: []const u16, b: []const u16) []u16 {
 fn finishArray(buf: []u16, n: usize) []u16 {
     const sz = arraySizeFor(n).?;
     const out = buf[0..sz];
-    zero(out[start_idx + n ..]);
     out[index_size] = sz;
     setType(out, .array);
     setCardinality(out, @intCast(n));
@@ -888,11 +883,8 @@ pub fn containerOr(
             .array => {
                 const combined: usize =
                     getCardinality(dst) + getCardinality(src);
-                // DESIGN.md phrases this threshold as "combined > 4096", which
-                // comes from sroar's variable-sized array containers. Ours stop
-                // at max_array_size, so the union becomes a bitmap as soon as
-                // no array container can hold it — a stricter, reachable
-                // bound.
+                // "Fits an array size or converts": the union becomes a
+                // bitmap as soon as no array container can hold it.
                 if (arraySizeFor(combined) == null) {
                     array.toBitmapInto(buf, dst);
                     bitmap.orArray(buf, src, lazy);
@@ -907,7 +899,6 @@ pub fn containerOr(
                 );
                 const sz = arraySizeFor(n).?;
                 const out = buf[0..sz];
-                zero(out[start_idx + n ..]);
                 out[index_size] = @intCast(sz);
                 setType(out, .array);
                 setCardinality(out, @intCast(n));

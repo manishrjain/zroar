@@ -34,6 +34,10 @@ pub const Iterator = @import("iterator.zig").Iterator;
 /// The high 48 bits of a value select its container.
 pub const key_mask = keys_mod.key_mask;
 
+/// The serialized layout's version, stamped into the first two bytes of every
+/// buffer. `fromBuffer` accepts only buffers carrying this value.
+pub const format_version = keys_mod.format_version;
+
 /// Slice types for zroar buffers and containers. The 8-byte alignment is a
 /// correctness requirement, not a hint: a buffer's keys node and a bitmap
 /// container's payload are both viewed as `[]u64`. The trailing number is the
@@ -133,7 +137,7 @@ pub const Bitmap = struct {
     /// grow the buffer — growth reallocates and the view dangles.
     pub fn keys(self: *const Bitmap) Keys {
         const p: [*]u64 = @ptrCast(self.data.ptr);
-        const node_size: usize = @intCast(p[0]);
+        const node_size = keys_mod.nodeSizeOf(p[0]);
         assert(node_size % 4 == 0);
         assert(node_size >= 16 and node_size <= self.data.len);
         return .{ .n = p[0 .. node_size / 4] };
@@ -141,7 +145,7 @@ pub const Bitmap = struct {
 
     fn setNodeSize(self: *Bitmap, node_size: usize) void {
         const p: [*]u64 = @ptrCast(self.data.ptr);
-        p[0] = node_size;
+        p[0] = keys_mod.packNodeSize(node_size);
     }
 
     /// Internal: the container living at `offset`, sized by its own header.
@@ -183,10 +187,20 @@ pub const Bitmap = struct {
         return needed +| (needed / 2 + floor);
     }
 
-    /// Opens a zeroed hole of `by_size` u16s at `offset`, growing the buffer to
+    /// Opens a hole of `by_size` u16s at `offset`, growing the buffer to
     /// suit. Container-unaware: the caller fixes up affected offsets via
     /// `Keys.updateOffsets`. Passing `data.len` scoots nothing and so is a
     /// plain append, which is how a new container is added.
+    ///
+    /// The hole is NOT zeroed. Nothing reads past what the headers say is
+    /// live — array slack, spare key pairs and scoot holes are all dead
+    /// bytes — so the caller initializes only what it means to use, and a
+    /// bitmap container's payload, whose every bit is data, is zeroed by
+    /// whoever creates one (`toBitmap`/`toBitmapInto`, or `zero` at the two
+    /// sites that build one bit by bit). Serialization is what stale dead
+    /// bytes could leak into, and `compact` — the step before storing —
+    /// rebuilds into a `zero`ed buffer, which is what makes its output
+    /// canonical. See DESIGN.md.
     ///
     /// Modelled on std.array_list.addManyAt, for its two reasons. Growth tries
     /// `remap` first, which for the C allocator reaches `realloc` and lets a
@@ -221,9 +235,6 @@ pub const Bitmap = struct {
                 self.allocator.free(self.data.ptr[0..self.cap]);
                 self.data = out.ptr[0..to_size];
                 self.cap = new_cap;
-                // The hole is the only part of the new buffer nothing was
-                // copied into, and allocators do not zero for us.
-                zero(self.data[offset..][0..by_size]);
                 return;
             }
         } else {
@@ -236,27 +247,33 @@ pub const Bitmap = struct {
             self.data[offset + by_size .. to_size],
             self.data[offset..old_len],
         );
-        zero(self.data[offset..][0..by_size]);
     }
 
-    /// Appends a zeroed container of `sz` u16s and returns its offset.
+    /// Appends an empty array container of `sz` u16s and returns its offset.
+    /// Only the header is initialized; the payload is dead bytes until the
+    /// cardinality says otherwise.
     fn newContainer(self: *Bitmap, sz: u16) !usize {
         assert(sz % 4 == 0);
         const offset = self.data.len;
         assert(offset % 4 == 0);
         try self.scootRight(offset, sz); // offset == data.len: an append
         self.data[offset] = sz;
+        const c = self.getContainer(offset);
+        container.setType(c, .array);
+        container.setCardinality(c, 0);
         return offset;
     }
 
-    /// Abandons the slot at `offset` after its container moved away: zero
-    /// everything but the size header, leaving a canonical empty array
-    /// container in place for `cleanup` to reclaim. Runs that cleanup once
+    /// Abandons the slot at `offset` after its container moved away: mark it
+    /// an empty array container — cardinality zero is what `cleanup` reclaims
+    /// by — and leave its payload as dead bytes. Runs that cleanup once
     /// dead slots exceed the `max_dead_divisor` bound — after which every
     /// offset the caller holds may have moved.
     fn markDead(self: *Bitmap, offset: usize) void {
         const sz = self.data[offset];
-        zero(self.data[offset + 1 ..][0 .. sz - 1]);
+        const c = self.getContainer(offset);
+        container.setType(c, .array);
+        container.setCardinality(c, 0);
         stats.bump(&self.counters, .abandoned_u16, sz);
         self.dead += sz;
         if (self.dead * max_dead_divisor > self.data.len) self.cleanup();
@@ -647,6 +664,14 @@ pub const Bitmap = struct {
         if (buf.len % 2 != 0 or buf.len < min_buffer_bytes)
             return init(allocator);
 
+        // A version this build does not know means the layout may differ;
+        // misreading it silently would be far worse than refusing. (Unlike
+        // the size checks above, which mean "not a bitmap at all" and get an
+        // empty one, this is a bitmap — just not ours to read.)
+        const words: [*]const u64 = @ptrCast(@alignCast(buf.ptr));
+        if (keys_mod.versionOf(words[0]) != format_version)
+            return error.UnsupportedFormatVersion;
+
         const p: [*]align(8) u16 = @ptrCast(buf.ptr);
         return .{
             .data = p[0 .. buf.len / 2],
@@ -841,7 +866,7 @@ pub const Bitmap = struct {
         var bi: usize = 0;
         while (ai < ka.numKeys() and bi < kb.numKeys()) {
             const ak = ka.key(ai);
-            const bk = kb.key(bi); // sroar reads a.keys here; that is Go bug 1
+            const bk = kb.key(bi); // kb, not ka: bi indexes b's keys
             if (ak < bk) {
                 ai += 1;
                 continue;
@@ -1038,8 +1063,9 @@ pub const Bitmap = struct {
         }
     }
 
-    /// Grows the container at `offset` to exactly `sz` u16s, leaving the extra
-    /// room zeroed. `sz` must not be smaller than the container's current size.
+    /// Grows the container at `offset` to exactly `sz` u16s; the extra room
+    /// is dead bytes. `sz` must not be smaller than the container's current
+    /// size.
     fn growContainerTo(self: *Bitmap, offset: usize, sz: u16) !void {
         const cur = self.data[offset];
         if (cur >= sz) return;
@@ -1171,8 +1197,13 @@ pub const Bitmap = struct {
                 const sz = containerSizeFor(e.card);
                 if ((sz == container.max_size) != bitmap_pass) continue;
                 const offset = try dst.addContainer(e.key, sz);
-                if (bitmap_pass)
-                    container.setType(dst.getContainer(offset), .bitmap);
+                if (bitmap_pass) {
+                    const c = dst.getContainer(offset);
+                    container.setType(c, .bitmap);
+                    // The lazy unions below OR into this payload, so every
+                    // bit of it is data and must start cleared.
+                    zero(container.bitmap.words(c));
+                }
             }
         }
 
@@ -1244,6 +1275,7 @@ pub const Bitmap = struct {
         if (sz == container.max_size) {
             container.setType(c, .bitmap);
             const w = container.bitmap.words(c);
+            zero(w); // every bit of a bitmap payload is data
             for (vals) |x| {
                 const lo: u16 = @truncate(x);
                 w[lo >> 6] |= @as(u64, 1) << @truncate(lo);
@@ -1389,9 +1421,8 @@ pub const Bitmap = struct {
         const by_size = removed * key_pair_size;
         const new_size = ks.size() - by_size;
         ks.setNumKeys(w);
-        // Clear the pair slots that are spare capacity now, keeping the buffer
-        // canonical, then drop the tail of the node the pairs no longer need.
-        zero(self.data[node_header_size + key_pair_size * w .. new_size]);
+        // The pair slots between w and the shrunk end are spare capacity now
+        // (dead bytes); drop the tail of the node the pairs no longer need.
         self.setNodeSize(new_size);
         self.scootLeft(new_size, by_size);
 

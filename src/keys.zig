@@ -3,12 +3,19 @@
 //!
 //! Layout, in u64 units:
 //!
-//! | index    | meaning                                            |
-//! |----------|----------------------------------------------------|
-//! | 0        | node size in **u16** units (always a multiple of 4) |
-//! | 1        | number of keys                                     |
-//! | 2 + 2i   | key i (top 48 bits of a value)                     |
-//! | 3 + 2i   | offset of container i, in u16 units                |
+//! | index    | meaning                                             |
+//! |----------|-----------------------------------------------------|
+//! | 0        | low 16 bits: format version; high 48 bits: node size |
+//! |          | in **u16** units (always a multiple of 4)            |
+//! | 1        | number of keys                                      |
+//! | 2 + 2i   | key i (top 48 bits of a value)                      |
+//! | 3 + 2i   | offset of container i, in u16 units                 |
+//!
+//! The version sits in the low bits, so it is the first two bytes of every
+//! serialized bitmap (the format is little-endian by definition). `fromBuffer`
+//! refuses a buffer whose version it does not know, which is what lets the
+//! layout change later without old readers silently misreading new buffers —
+//! or new readers old ones, whose version bytes are 0.
 //!
 //! Ported from sroar's keys.go.
 
@@ -22,6 +29,26 @@ pub const key_mask: u64 = 0xFFFF_FFFF_FFFF_0000;
 pub const index_node_size: usize = 0;
 pub const index_num_keys: usize = 1;
 pub const index_node_start: usize = 2;
+
+/// The layout described in this file and container.zig. Bump on any change
+/// to the serialized layout; `Bitmap.fromBuffer` accepts only this value.
+pub const format_version: u16 = 1;
+
+/// The version half of the buffer's first u64.
+pub fn versionOf(word: u64) u16 {
+    return @truncate(word);
+}
+
+/// The node-size half of the buffer's first u64, in u16 units.
+pub fn nodeSizeOf(word: u64) usize {
+    return @intCast(word >> 16);
+}
+
+/// The buffer's first u64: `sz` u16s of keys node, stamped with the version.
+pub fn packNodeSize(sz: usize) u64 {
+    assert(sz >> 48 == 0);
+    return (@as(u64, sz) << 16) | format_version;
+}
 
 /// Window size at which `search` stops bisecting and scans instead.
 ///
@@ -71,7 +98,7 @@ pub const Keys = struct {
 
     /// Node size in u16 units.
     pub fn size(self: Keys) usize {
-        return @intCast(self.n[index_node_size]);
+        return nodeSizeOf(self.n[index_node_size]);
     }
 
     /// Number of keys currently stored.
@@ -102,7 +129,7 @@ pub const Keys = struct {
     }
 
     pub fn setNodeSize(self: Keys, sz: usize) void {
-        self.n[index_node_size] = sz;
+        self.n[index_node_size] = packNodeSize(sz);
     }
 
     pub fn setNumKeys(self: Keys, num: usize) void {

@@ -100,8 +100,8 @@ test "conversion happens exactly at the array ceiling" {
     var bm = try Bitmap.init(testing.allocator);
     defer bm.deinit();
 
-    // Container sizes double up to 2048, which holds 2044 values, and the
-    // 2044th insert fills it, which triggers the bitmap conversion.
+    // The top ladder step (max_array_size u16s) holds max_array_values
+    // values, and the insert that fills it triggers the bitmap conversion.
     var i: u64 = 0;
     while (i < container.max_array_values - 1) : (i += 1) _ = try bm.set(i);
     try testing.expectEqual(container.Type.array, containerTypeOf(&bm, 0));
@@ -1628,8 +1628,8 @@ test "andInPlace on containers that disagree on type" {
 }
 
 test "orInPlace grows array containers through every size step" {
-    // Key 0 starts as a min_size array and has to walk every doubling up to
-    // 2048 and then convert to a bitmap as the unions get bigger.
+    // Key 0 starts as a min_size array and has to walk every ladder step up
+    // to max_array_size and then convert to a bitmap as the unions get bigger.
     var dst = try testBitmap(&.{1});
     defer dst.deinit();
     var ref = try testRefSet(&.{1});
@@ -2006,4 +2006,73 @@ test "chains of operations keep agreeing with a reference set" {
             try expectSameAs(&ref, &bm);
         }
     }
+}
+
+test "compact canonicalizes: equal sets give byte-identical buffers" {
+    // The working buffer is allowed to carry dead bytes — array slack, dead
+    // slots, the payloads of removed values — so two equal bitmaps need not
+    // match byte for byte. compact() rebuilds into a zeroed buffer, so after
+    // it they must. One bitmap takes the scenic route: extra values inserted
+    // and removed again (stale payload past the cardinality), enough churn to
+    // grow and relocate containers, and a spare key emptied by the removes.
+    var scenic = try Bitmap.init(testing.allocator);
+    defer scenic.deinit();
+    var i: u64 = 0;
+    while (i < 4000) : (i += 1) _ = try scenic.set(i * 3);
+    _ = try scenic.set(1 << 40);
+    i = 0;
+    while (i < 4000) : (i += 1) {
+        if (i % 3 != 0) _ = scenic.remove(i * 3);
+    }
+    _ = scenic.remove(1 << 40);
+
+    var vals: std.ArrayListUnmanaged(u64) = .empty;
+    defer vals.deinit(testing.allocator);
+    i = 0;
+    while (i < 4000) : (i += 3) try vals.append(testing.allocator, i * 3);
+    var direct = try Bitmap.fromSortedList(testing.allocator, vals.items);
+    defer direct.deinit();
+
+    try scenic.compact();
+    try direct.compact();
+    try testing.expectEqualSlices(u16, direct.data, scenic.data);
+    try checkInvariants(&scenic);
+}
+
+test "the format version is the buffer's first two bytes and is enforced" {
+    var bm = try testBitmap(&.{ 1, 99, 1 << 40 });
+    defer bm.deinit();
+    const buf = try bm.toBufferCopy(testing.allocator);
+    defer testing.allocator.free(buf);
+
+    // Little-endian low 16 bits of the first u64: bytes 0 and 1 of the file.
+    try testing.expectEqual(@as(u8, zroar.format_version), buf[0]);
+    try testing.expectEqual(@as(u8, 0), buf[1]);
+
+    var reopened = try Bitmap.fromBuffer(testing.allocator, buf);
+    defer reopened.deinit();
+    try testing.expect(reopened.contains(1 << 40));
+
+    // A version from the future (or a pre-versioning buffer, whose bytes
+    // here are 0) must be refused, not misread.
+    buf[0] = zroar.format_version + 1;
+    try testing.expectError(
+        error.UnsupportedFormatVersion,
+        Bitmap.fromBuffer(testing.allocator, buf),
+    );
+    try testing.expectError(
+        error.UnsupportedFormatVersion,
+        Bitmap.fromBufferCopy(testing.allocator, buf),
+    );
+    buf[0] = 0;
+    try testing.expectError(
+        error.UnsupportedFormatVersion,
+        Bitmap.fromBuffer(testing.allocator, buf),
+    );
+
+    // Restored, it opens again.
+    buf[0] = zroar.format_version;
+    var again = try Bitmap.fromBuffer(testing.allocator, buf);
+    defer again.deinit();
+    try testing.expectEqual(@as(u64, 3), again.getCardinality());
 }

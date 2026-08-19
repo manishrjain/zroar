@@ -69,7 +69,7 @@ stored alias dangles after realloc):
 ```zig
 fn keys(self: *const Bitmap) Keys {
     const p: [*]u64 = @ptrCast(self.data.ptr);
-    return .{ .n = p[0 .. p[0] / 4] };   // p[0] = node size in u16 units
+    return .{ .n = p[0 .. nodeSizeOf(p[0]) / 4] }; // p[0] >> 16 = node size in u16 units
 }
 ```
 
@@ -77,10 +77,15 @@ Layout in u64 units:
 
 | u64 index | meaning |
 |---|---|
-| 0 | node size in **u16 units** (multiple of 4) |
+| 0 | low 16 bits: **format version** (currently 1); high 48 bits: node size in **u16 units** (multiple of 4) |
 | 1 | number of keys |
 | 2 + 2i | key i — `value & 0xFFFF_FFFF_FFFF_0000` (top 48 bits) |
 | 3 + 2i | offset of container i into `data`, in u16 units (multiple of 4) |
+
+The version occupies the buffer's first two bytes (the format is little-endian
+by definition), so any layout change can bump `keys.format_version` and old
+readers refuse new buffers — and new readers refuse pre-versioning ones — rather
+than misreading them (`fromBuffer` → `error.UnsupportedFormatVersion`).
 
 - Keys sorted ascending. Binary search (`Keys.search`) returns the index of
   the smallest key >= target, or numKeys.
@@ -106,8 +111,9 @@ base):
 Cardinality sentinel: `0xFFFF_FFFF` = "invalid, recompute" — used only during
 `fastOr`'s lazy union, repaired before it returns. Valid range 0…65536.
 
-**Array container**: payload = sorted unique u16s. Allocated sizes double
-from `container.min_size` up to 2048 u16s (header included). `min_size` is
+**Array container**: payload = sorted unique u16s. Allocated sizes follow the
+ladder in `container.array_sizes`: doubling from `container.min_size` to
+1024 u16s, then half-steps 1536, 2048, 3072 (header included). `min_size` is
 the one adjustable knob for the waste-vs-growth-steps trade-off (see its doc
 comment); the default of 8 u16s (16 bytes, 4 value slots) keeps single-value
 containers nearly free — the case that dominates scattered u64 keys.
@@ -115,7 +121,7 @@ Membership: binary search (`std.sort.binarySearch`-style; linear scan is fine
 below ~16 elements). Insert/remove: memmove within the container.
 **Invariant: after any successful insert an array container has >= 1 free
 slot** — `set` inserts first, then expands/converts if now full. When growth
-would exceed 2048 u16s, convert to a bitmap container instead.
+would exceed 3072 u16s, convert to a bitmap container instead.
 
 **Bitmap container**: fixed 4100 u16s (4 header + 4096 payload = 1024 u64
 words). **LSB-first**: value `x` (low 16 bits) lives in word `x >> 6`, bit
@@ -131,25 +137,24 @@ All kernels operate on the `[]u64` view:
 - minimum: `@ctz` of first nonzero word; maximum: `63 - @clz` of last nonzero.
 
 Conversion thresholds:
-- array → bitmap: when the array would grow past 2048 u16s (~2044 values).
+- array → bitmap: when the array would grow past 3072 u16s (~3068 values).
 - union of two arrays / fastOr pre-sizing: a bitmap container whenever no
-  array container fits the (estimated) cardinality, i.e. > ~2043 values.
-  (Go's documented 4096 threshold is unreachable under this ladder — two
-  maximal arrays sum to 4086 — so the effective rule is "fits or converts".)
+  array container fits the (estimated) cardinality, i.e. > 3067 values —
+  "fits an array size or converts".
 - **No demotion of an existing bitmap container.** Result-type *selection at
   creation* by cardinality (e.g. And emitting a small array from a
   bitmap∩bitmap) is allowed and used.
 
 ### Growth machinery (port of sroar bitmap.go, same names where sensible)
 
-- `scootRight(offset, bySize)`: the one growth primitive — open a zeroed hole of
+- `scootRight(offset, bySize)`: the one growth primitive — open a hole of
   bySize u16s at `offset`, growing `data` to suit. Caller fixes offsets via
   `Keys.updateOffsets` (strictly-greater-than comparison, so the container at
   `offset` itself doesn't shift). `offset == data.len` scoots nothing and is
   therefore a plain append, which is how sroar's separate `fastExpand` is
-  spelled here. The newly opened hole must be zeroed before use (Zig allocators
-  do not zero; Go's bug here — Memclr counting elements as bytes — is not
-  ported).
+  spelled here. The hole is not zeroed (see "Zeroing and canonical form"): callers initialize
+  the headers they create, and bitmap payloads are cleared by whoever builds
+  one.
 
   Shaped after `std.array_list.addManyAt`, which solves the same problem:
   - Capacity comes from `growCapacity(needed) = needed + needed/2 + 32`, lifted
@@ -167,16 +172,18 @@ Conversion thresholds:
     copied straight to their final positions in the new allocation, so the tail
     is copied once instead of being copied whole and then scooted.
   - A borrowed buffer is never remapped or freed, only copied out of.
-- `newContainer(sz)`: append zeroed container at end, write header size,
+- `newContainer(sz)`: append empty array container at end (header initialized,
+  payload dead bytes), write header size,
   return offset.
 - `expandContainer(key, offset)`: double the container (or jump to 4100 +
-  convert array→bitmap at the 2048 threshold). A container last in the
+  convert array→bitmap at the 3072 threshold). A container last in the
   buffer grows by plain append. Any other container is MOVED to the end
   of the buffer instead of grown in place: growing in place would memmove
   everything behind it at every rung of the size ladder — quadratic over
   a build — while the move costs one container copy plus a dead slot. The
-  key is repointed at the new offset; the old slot is zeroed behind its
-  size header, leaving a canonical empty array container (a "dead slot").
+  key is repointed at the new offset; the old slot is marked an empty array
+  container behind its size header (a "dead slot" — cardinality zero is what
+  cleanup reclaims by; its payload is dead bytes).
   `copyAt(key, offset, src)` — which installs a finished container,
   growing the existing one if `src` no longer fits — follows the same
   rule, since `src` replaces the old contents entirely anyway.
@@ -184,8 +191,9 @@ Conversion thresholds:
   Once dead slots exceed a quarter of the buffer (`dead * max_dead_divisor
   > data.len`, `max_dead_divisor = 4`), the mutating op runs `cleanup`
   itself, bounding the waste a build-heavy workload can accumulate at 25%
-  of the buffer. Dead slots are canonical empty array containers, so the
-  existing cleanup machinery reclaims them with no new code. A buffer
+  of the buffer. Dead slots are empty array containers (cardinality zero,
+  payload dead bytes), so the existing cleanup machinery reclaims them with
+  no new code. A buffer
   serialized with dead slots still in it is valid — readers go through
   the keys node and never see them — it is just larger than it needs
   to be.
@@ -239,37 +247,30 @@ Set ops: `andInPlace(*const Bitmap) void` (in-place, allocation-free),
 (compact zero-cardinality containers and relocation dead slots, resetting
 `dead`; preserves key 0).
 
+Intersection and difference results are subsets of the left operand, so the
+in-place forms compute the result inside the left container itself — a
+two-pointer rewrite whose writes never overtake its reads. No allocation, no
+orphaned containers.
+
+Out of scope (deliberately not offered): rank/select, range removal, bitmap
+splitting, parallel n-ary union; run containers are excluded by constraint 3.
+
 Error policy: only operations that may allocate return `error{OutOfMemory}!T`.
 All reads take `*const Bitmap` and cannot fail. Internal invariant violations
 are `std.debug.assert` (verified in Debug/ReleaseSafe, free in ReleaseFast).
 
-## Semantics source, and Go bugs that must NOT be ported
+## Zeroing and canonical form
 
-Port semantics from `~/source/sroar` (`bitmap.go`, `keys.go`, `container.go`,
-`setutil.go`, `iterator.go`). Known Go bugs to avoid:
-
-1. `And(a, b)` reads `a.keys.key(bi)` where it must be `b.keys` (bitmap.go:825).
-2. `Memclr` passes an element count where bytes are expected (utils.go:100).
-3. `array.andNotBitmap` leaves the result's size header at 4 (container.go:292).
-4. Two-operand `Or` can emit an exactly-full array container, violating the
-   free-slot invariant (container.go:264).
-5. Iterator uses value 0 as an end sentinel — ours returns `?u64`.
-6. `And`/`AndNot` append a fresh result container and orphan the old one
-   (permanent dead space). Ours: intersection/difference results are subsets
-   of the left operand, so compute **in place** in the left container —
-   two-pointer writes never overtake reads. No allocation, no orphans.
-7. The 32 MB package-level `empty` zeroing buffer — zero in place. Not with
-   `@memset`, though: with libc linked, Zig 0.16 resolves that to compiler_rt's
-   byte-loop `memset` (upstream is fixing it for 0.17), and zroar zeroes every
-   container it creates. `zero.zig` stores 32 bytes a step instead.
-
-`setutil.go`'s `union2by2` / `intersection2by2` (with the 64×-skew galloping
-variant `onesidedgallopingintersect2by2` + `advanceUntil`) are sound; port them
-as the scalar array-merge kernels. Skip the dead code (`*Cardinality`
-variants, `binarySearch`, `equal`, `exclusiveUnion2by2`).
-
-Not ported at all (out of scope): `FastParOr`, `Split`, `Select`, `Rank`,
-`RemoveRange`, `ManyItr`, run containers.
+Zeroing is done in place by `zero.zig`, and only where zeros are data. A
+bitmap container's payload is its bits, so whoever creates one clears it
+(`toBitmap`/`toBitmapInto`, and the two sites that build one bit by bit);
+everything else the headers bound — array slack, dead slots, spare key
+pairs, scoot holes — is dead bytes and is not zeroed. The working buffer is
+therefore NOT canonical: two equal sets need not match byte for byte, and
+bytes of removed values may linger in the slack. `compact()` is the
+canonicalizer — it rebuilds into a zeroed buffer, so equal sets compact to
+identical bytes, and it is the step before storing; serialize a
+non-compacted buffer only if its dead bytes are acceptable in the output.
 
 ## fastOr (the flagship bulk union — port with one simplification)
 
@@ -318,7 +319,7 @@ zroar/
    (`zig build test`, run in Debug and ReleaseSafe): a file nothing imports
    has its tests silently skipped, so every test file must be listed there.
    Coverage: setutil merges incl. gallop threshold; container conversion
-   at 2043/2044/2045 elements; keys-node growth under many keys; boundary
+   at the array→bitmap boundary (`max_array_values` ± 1); keys-node growth under many keys; boundary
    values 0, 0xFFFF, 0x10000, 1<<48, maxInt(u64); round-trip
    `fromBuffer(toBufferCopy(bm))` bit-identical (`std.mem.eql` on u16s).
 2. Property tests (prop_test.zig): seeded `std.Random.DefaultPrng`; random
@@ -329,7 +330,13 @@ zroar/
    checks for and/or/andNot/fastOr vs reference sets.
 3. Differential test (bench/difftest.zig, links CRoaring from its checkout):
    identical op streams into zroar and `roaring64.Bitmap64`, compare
-   cardinality every 1k ops and full arrays at checkpoints.
+   cardinality every 1k ops and full arrays at checkpoints; plus a bulk-build
+   pass (sorted build, both serialized round trips, removes) and a set-algebra
+   pass (And/Or/AndNot materialized, in place and fused, fastOr, compact)
+   against CRoaring's equivalents. `zig build difftest` is one fixed-seed
+   pass (~2s); `zig build difftest -- --soak <sec>` repeats it with fresh
+   derived seeds until the time is up, printing progress and, on a failure,
+   the seed that replays it.
 
 ## Benchmarks (bench/bench.zig)
 

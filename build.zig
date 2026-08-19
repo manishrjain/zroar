@@ -235,7 +235,10 @@ fn addDifftest(
     });
     exe.root_module.addImport("zroar", zroar_mod);
     Croaring.attach(found, b, exe.root_module, target, diff_optimize);
-    step.dependOn(&b.addRunArtifact(exe).step);
+    const run = b.addRunArtifact(exe);
+    // `zig build difftest -- --soak 600` and friends reach the binary.
+    if (b.args) |args| run.addArgs(args);
+    step.dependOn(&run.step);
 }
 
 /// Wires up `zig build bench`, which compares zroar against CRoaring's

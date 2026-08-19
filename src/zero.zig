@@ -4,8 +4,10 @@
 //! links libc the symbol resolves to compiler_rt's copy rather than libc's —
 //! a byte-at-a-time loop, unlike its `memcpy` neighbour, which got a proper
 //! implementation. (Upstream has a fix in the works for 0.17.) zroar zeroes
-//! every container it creates and every slot it vacates, so on a two-operand
-//! union that loop was about 40% of the whole operation.
+//! only where zeros are data — a bitmap container's payload, `compact`'s
+//! output buffer, a fresh bitmap's first bytes — but a bitmap container is
+//! 8 KB and `compact` rewrites everything, so the slow loop still cost real
+//! time wherever it was kept.
 //!
 //! `zero` stores 64 bytes per step instead, then finishes with single stores
 //! of 32, 16, 8, 4, 2 and 1 bytes — straight-line code, no loop. Measured
