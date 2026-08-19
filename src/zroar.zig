@@ -70,9 +70,6 @@ const key_pair_size: usize = 8;
 pub const min_buffer_bytes: usize =
     2 * (4 * (2 * init_num_keys + 2) + container.min_size);
 
-/// See `Bitmap.cursor`.
-const Cursor = struct { key: u64, offset: usize };
-
 pub const Bitmap = struct {
     /// The in-use region of the buffer, in u16 units.
     data: AlignedU16,
@@ -84,13 +81,6 @@ pub const Bitmap = struct {
     owned: bool,
     /// Dead u16s abandoned by container relocation; see `max_dead_divisor`.
     dead: usize = 0,
-    /// One-entry cache of the last (key, container offset) a mutation
-    /// resolved. Sequential row-ids land in the same container over and
-    /// over, and a hit turns each repeat's keys-node search into one
-    /// compare. Only the write path uses it — reads keep `*const Bitmap` —
-    /// and it is nulled wherever containers move: relocation (`markDead`),
-    /// `cleanup`, and keys-node growth.
-    cursor: ?Cursor = null,
     allocator: std.mem.Allocator,
     /// Optional per-bitmap counters for the memory this bitmap moves around.
     /// Zero-bit and inert unless the root source file declares
@@ -265,9 +255,6 @@ pub const Bitmap = struct {
     /// dead slots exceed the `max_dead_divisor` bound — after which every
     /// offset the caller holds may have moved.
     fn markDead(self: *Bitmap, offset: usize) void {
-        // The dead slot may be exactly what the cursor points at, and the
-        // cleanup below can move every other container besides.
-        self.cursor = null;
         const sz = self.data[offset];
         zero(self.data[offset + 1 ..][0 .. sz - 1]);
         stats.bump(&self.counters, .abandoned_u16, sz);
@@ -334,7 +321,6 @@ pub const Bitmap = struct {
         while (i < ks.numKeys()) : (i += 1) {
             ks.setValAt(i, ks.val(i) + by_size);
         }
-        self.cursor = null; // every offset just moved
         return offset + by_size;
     }
 
@@ -446,18 +432,15 @@ pub const Bitmap = struct {
     // -----------------------------------------------------------------------
 
     /// The container offset for `key`, or null when `key` has no container.
-    /// Answers from the cursor when it holds `key`; otherwise searches the
-    /// keys node and leaves the cursor pointing at what it found.
+    ///
+    /// Repeats of one key and runs of ascending keys — sequential row-ids —
+    /// are answered by `Keys.getValue`'s neighbourhood hint in a compare or
+    /// two rather than a search; see keys.zig. (An earlier one-entry cursor
+    /// field did the same for repeats only, and had to be nulled wherever
+    /// containers moved. The hint carries a keys-node index, which nothing
+    /// moves, and is checked against the node before use.)
     fn getOffset(self: *Bitmap, key: u64) ?usize {
-        if (self.cursor) |c| {
-            if (c.key == key) {
-                stats.bump(&self.counters, .cursor_hits, 1);
-                return c.offset;
-            }
-        }
-        const off = self.keys().getValue(key) orelse return null;
-        self.cursor = .{ .key = key, .offset = off };
-        return off;
+        return self.keys().getValue(key);
     }
 
     /// `getOffset`, creating a minimum-size container for `key` when it has
@@ -465,11 +448,7 @@ pub const Bitmap = struct {
     fn getOrCreateOffset(self: *Bitmap, key: u64) !usize {
         if (self.getOffset(key)) |off| return off;
         const fresh = try self.newContainer(container.min_size);
-        // setKey nulls the cursor when inserting the key grew the node, so
-        // the cursor is refilled after it, with the adjusted offset.
-        const off = try self.setKey(key, fresh);
-        self.cursor = .{ .key = key, .offset = off };
-        return off;
+        return self.setKey(key, fresh);
     }
 
     /// Adds x. Returns true if it was not already present. On a bitmap
@@ -1290,7 +1269,6 @@ pub const Bitmap = struct {
     /// merges neighbouring holes just as well.
     pub fn cleanup(self: *Bitmap) void {
         assert(self.owned); // infallible: see ensureOwned
-        self.cursor = null; // closing holes moves containers
         // Keys first: while they still point at their own containers, an empty
         // container can be told apart from a live one by its cardinality alone.
         stats.bump(&self.counters, .cleanups, 1);

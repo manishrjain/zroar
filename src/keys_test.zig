@@ -92,3 +92,46 @@ test "updateOffsets shifts only offsets beyond the boundary" {
     ks.updateOffsets(200, 64, false);
     try testing.expectEqual(@as(usize, 300), ks.val(2));
 }
+
+test "getValue's neighbourhood hint never changes an answer" {
+    // Ascending hits and misses (the case the hint serves), a random stream
+    // (the case it must stay out of the way of), and two nodes taken in
+    // turns (the hint's node changes under it), all checked against a plain
+    // search. The hint is thread-local state, so this also runs after every
+    // other test has left it pointing wherever it pleased.
+    const a_backing = try testing.allocator.alloc(u64, 2 + 2 * 3000);
+    defer testing.allocator.free(a_backing);
+    const b_backing = try testing.allocator.alloc(u64, 2 + 2 * 3000);
+    defer testing.allocator.free(b_backing);
+    const a = testNode(a_backing, 3000);
+    const b = testNode(b_backing, 3000);
+    var i: u64 = 0;
+    while (i < 3000) : (i += 1) {
+        _ = a.set(i << 16, i, &sink); // every key
+        if (i % 3 == 0) _ = b.set(i << 16, i, &sink); // every third key
+    }
+    const nodes = [_]Keys{ a, b };
+
+    const check = struct {
+        fn run(ks: Keys, k: u64) !void {
+            const want = ks.search(k);
+            const got = ks.getValue(k);
+            const hit = want < ks.numKeys() and ks.key(want) == k;
+            try testing.expectEqual(hit, got != null);
+            if (got) |v| try testing.expectEqual(ks.val(want), v);
+        }
+    }.run;
+
+    // Ascending, running past the end of both nodes.
+    var k: u64 = 0;
+    while (k < 3200) : (k += 1) {
+        for (nodes) |ks| try check(ks, k << 16);
+    }
+    // Random, alternating nodes.
+    var prng = std.Random.DefaultPrng.init(11);
+    const rnd = prng.random();
+    var t: usize = 0;
+    while (t < 20_000) : (t += 1) {
+        try check(nodes[t & 1], rnd.uintLessThan(u64, 3200) << 16);
+    }
+}

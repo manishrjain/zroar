@@ -28,7 +28,7 @@
 //! opened or written: portable, the interchange format, and frozen, its memory
 //! layout written out and viewed in place — which is the class zroar's format
 //! belongs to. Frozen views are read-only, so the one row that writes after
-//! opening (`MixedOLTP`) has no frozen column.
+//! opening (`MixedOLTP`) opens its frozen column as a view plus a copy.
 //!
 //! Harness: every row is measured through the same loop, one warm-up call and
 //! then calls until the row's time budget is spent, for every implementation
@@ -769,15 +769,21 @@ fn coldR64(comptime op: ROp, comptime format: Format) Func {
 // touches is chosen in proportion to its size, because a value that matches
 // many rows is queried as often as it is large. And the writes append: row-ids
 // are handed out in increasing order, so index maintenance always adds a value
-// above every value already there, never one in the middle. Frozen views are
-// read-only, so r64 opens through the portable format here.
+// above every value already there, never one in the middle.
+//
+// A frozen view is read-only, so the frozen column here is the writable
+// bitmap a frozen-format user has to make before appending: `frozen_view`
+// then `roaring64_bitmap_copy`. That builds the tree and copies the
+// containers, as the portable path does, but skips the portable parser —
+// whether that is cheaper is what the column measures.
 
 const open_rows: []const Row = cold_rows ++ &[_]Row{.{
     .name = "MixedOLTP",
     .suite = .cold,
     .variants = &.{
         .{ .impl = .zroar, .func = mixedOltpZroar },
-        .{ .impl = .r64, .func = mixedOltpR64 },
+        .{ .impl = .r64, .func = mixedOltpR64(.portable) },
+        .{ .impl = .r64_frozen, .func = mixedOltpR64(.frozen) },
     },
 }};
 
@@ -825,30 +831,42 @@ fn mixedOltpZroar(ds: *DataSet) u64 {
     return marker;
 }
 
-fn mixedOltpR64(ds: *DataSet) u64 {
-    var prng = std.Random.DefaultPrng.init(oltp_seed);
-    const rnd = prng.random();
-    var next_row = ds.row_id_next;
+fn mixedOltpR64(comptime format: Format) Func {
+    return struct {
+        fn f(ds: *DataSet) u64 {
+            var prng = std.Random.DefaultPrng.init(oltp_seed);
+            const rnd = prng.random();
+            var next_row = ds.row_id_next;
 
-    var marker: u64 = 0;
-    var t: usize = 0;
-    while (t < oltp_txns) : (t += 1) {
-        const list = pickList(ds, rnd);
-        const bm = Bitmap64.portableDeserializeSafe(ds.r64_portable_bufs[list]) catch unreachable;
+            var marker: u64 = 0;
+            var t: usize = 0;
+            while (t < oltp_txns) : (t += 1) {
+                const list = pickList(ds, rnd);
+                const bm = switch (format) {
+                    .portable => Bitmap64.portableDeserializeSafe(ds.r64_portable_bufs[list]) catch unreachable,
+                    .frozen => blk: {
+                        // The view is read-only; the copy is what gets written.
+                        const view = Bitmap64.frozenView(ds.r64_frozen_bufs[list]) catch unreachable;
+                        defer view.free();
+                        break :blk view.copy() catch unreachable;
+                    },
+                };
 
-        var i: usize = 0;
-        while (i < oltp_ops) : (i += 1) {
-            if (i % 10 == 0) {
-                if (bm.addChecked(next_row)) marker += 1;
-                next_row += 1;
-            } else {
-                const v = rnd.uintAtMost(u64, ds.row_id_max);
-                if (bm.contains(v)) marker += 1;
+                var i: usize = 0;
+                while (i < oltp_ops) : (i += 1) {
+                    if (i % 10 == 0) {
+                        if (bm.addChecked(next_row)) marker += 1;
+                        next_row += 1;
+                    } else {
+                        const v = rnd.uintAtMost(u64, ds.row_id_max);
+                        if (bm.contains(v)) marker += 1;
+                    }
+                }
+                bm.free();
             }
+            return marker;
         }
-        bm.free();
-    }
-    return marker;
+    }.f;
 }
 
 // ---------------------------------------------------------------------------

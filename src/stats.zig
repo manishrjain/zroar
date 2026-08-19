@@ -42,10 +42,6 @@ pub const enabled: bool = builtin.is_test or
 pub const Counters = struct {
     /// Calls to `Bitmap.set`, as the denominator for everything else.
     sets: u64 = 0,
-    /// Mutations whose container came from the bitmap's one-entry cursor
-    /// rather than a keys-node search. Sequential row-ids approach one hit
-    /// per set; scattered keys push this toward zero.
-    cursor_hits: u64 = 0,
 
     /// Array containers that outgrew their size and stepped up the ladder.
     container_grows: u64 = 0,

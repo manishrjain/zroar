@@ -60,7 +60,9 @@ How to read this:
   a column, written `portable / frozen`. *Portable* is its interchange format
   (a full parse to open). *Frozen* is its in-memory layout written out and
   viewed in place, read-only — the same kind of format as zroar's. `MixedOLTP`
-  writes after opening, so it has no frozen column.
+  writes after opening, which a frozen view does not allow, so its frozen
+  column is `frozen_view` plus `roaring64_bitmap_copy`: the writable bitmap a
+  frozen-format user has to make first.
 - Sizes and serialization are measured on what a store would write: zroar's
   buffers are compacted first (`compact()`, no growth slack), matching
   CRoaring's exact portable encoding and the `shrink_to_fit` its frozen
@@ -206,18 +208,54 @@ def main():
     p("")
     p(PREAMBLE)
 
-    # Summary: one geometric mean per data set and suite, with the spread. A
-    # geomean lets a 2× win and a 2× loss cancel, which an average of ratios
-    # does not; the spread keeps it from hiding a bad cell.
+    # Summary: geometric means of the ratios. A geomean lets a 2× win and a 2×
+    # loss cancel, which an average of ratios does not; the spread beside each
+    # keeps it from hiding a bad cell. First the headline numbers — one per
+    # table, over every data set — then the same per data set and per
+    # synthetic family.
+    FORMAT_FAMILIES = ("Serialize", "Deserialize")
     if runs or synthetic:
         p("## Summary")
         p("")
-        p("Two views of each table below. *Typical row*: the geometric mean of the "
-          "ratios, min–max in brackets — every benchmark counts the same. *Total "
-          "time*: each library's time summed over the rows, and the ratio of the "
-          "sums — the expensive rows dominate, as they would in a workload. Above 1 "
-          "= zroar faster. An overview only: the tables show where the wins and "
-          "losses actually are.")
+        p("Geometric means of the ratios (CRoaring's time ÷ zroar's; above 1 = "
+          "zroar faster), every cell counting the same. *Headline*: one number "
+          "per table, over every data set. Then the same per data set and per "
+          "synthetic family, each with its min–max and with *total time*: each "
+          "library's time summed over the rows and the ratio of the sums, where "
+          "the expensive rows dominate as they would in a workload. An overview "
+          "only: the tables further down show where the wins and losses are.")
+        p("")
+        p("| headline | cells | vs CRoaring | vs frozen |")
+        p("|---|---|---|---|")
+        if runs:
+            warm_all = [rows.get(n) for _, rows in runs.values() for n in REALDATA_ROWS]
+            cold_all = [rows.get(n) for _, rows in runs.values() for n in COLD_ROWS]
+            warm_all = [c for c in warm_all if c is not None]
+            cold_all = [c for c in cold_all if c is not None]
+            p(f"| realdata, bitmaps in memory (all data sets) | {len(warm_all)} | "
+              f"{fmt(geomean([ratio(c, 'r64') for c in warm_all]))} | – |")
+            p(f"| cold, every bitmap opened inside the call (all data sets) | {len(cold_all)} | "
+              f"{fmt(geomean([ratio(c, 'r64') for c in cold_all]))} (portable) | "
+              f"{fmt(geomean([ratio(c, 'r64_frozen') for c in cold_all]))} |")
+        if synthetic:
+            def family_scores(impl, fams):
+                out_ = []
+                for fam in fams:
+                    cells = [r for n, r in synthetic.items() if n.split("/")[0] == fam]
+                    g = geomean([ratio(c, impl) for c in cells])
+                    if g is not None:
+                        out_.append(g)
+                return out_
+            ops = [f for f in STEPPED + MASKED if f not in FORMAT_FAMILIES]
+            n_ops = sum(1 for n in synthetic if n.split("/")[0] in ops)
+            n_fmt = sum(1 for n in synthetic if n.split("/")[0] in FORMAT_FAMILIES)
+            p(f"| synthetic, operations (Contains/Insert/Remove/Random; families weighted equally) | {n_ops} | "
+              f"{fmt(geomean(family_scores('r64', ops)))} | – |")
+            p(f"| synthetic, Serialize + Deserialize | {n_fmt} | "
+              f"{fmt(geomean(family_scores('r64', FORMAT_FAMILIES)))} (portable) | "
+              f"{fmt(geomean(family_scores('r64_frozen', FORMAT_FAMILIES)))} |")
+            p(f"| synthetic, all families | {n_ops + n_fmt} | "
+              f"{fmt(geomean(family_scores('r64', STEPPED + MASKED)))} (portable where a format is involved) | – |")
         p("")
     if runs:
         p("| set | table | typical row | total time |")
@@ -229,25 +267,27 @@ def main():
               f"{totals(warm, {'r64': 'r64'}) or '–'} |")
             p(f"| {ds} | cold, opened portable | {score(cold, 'r64') or '–'} | "
               f"{totals(cold, {'r64': 'portable'}) or '–'} |")
-            # MixedOLTP has no frozen column, so its sums leave it out on both sides.
             p(f"| {ds} | cold, opened frozen | {score(cold, 'r64_frozen') or '–'} | "
               f"{totals(cold, {'r64_frozen': 'frozen'}) or '–'} |")
         p("")
     if synthetic:
         p("| synthetic family | typical row (vs CRoaring; portable where a format is involved) | vs frozen | total time |")
         p("|---|---|---|---|")
-        fam_scores = []
+        fam_scores = {}
         for fam in STEPPED + MASKED:
             cells = [r for n, r in synthetic.items() if n.split("/")[0] == fam]
             sp = score(cells, "r64") or "–"
             sf = score(cells, "r64_frozen") or "–"
-            impls = {"r64": "portable", "r64_frozen": "frozen"} if fam in ("Serialize", "Deserialize") else {"r64": "r64"}
+            impls = {"r64": "portable", "r64_frozen": "frozen"} if fam in FORMAT_FAMILIES else {"r64": "r64"}
             g = geomean([ratio(c, "r64") for c in cells])
             if g is not None:
-                fam_scores.append(g)
+                fam_scores[fam] = g
             p(f"| {fam} | {sp} | {sf} | {totals(cells, impls) or '–'} |")
+        ops_scores = [g for f, g in fam_scores.items() if f not in FORMAT_FAMILIES]
+        if ops_scores:
+            p(f"| **across the operation families** (Serialize/Deserialize excluded, each family weighted equally) | **{fmt(geomean(ops_scores))}** | | |")
         if fam_scores:
-            p(f"| **across families** (each weighted equally) | **{fmt(geomean(fam_scores))}** | | |")
+            p(f"| **across all families** (each weighted equally) | **{fmt(geomean(list(fam_scores.values())))}** | | |")
         p("")
 
     if runs:
@@ -341,14 +381,27 @@ def main():
                         return pr
                     p(f"| {fam} | {c:,} | {cell(STEPS[:1])} | {cell(STEPS[1:2])} | {cell(STEPS[2:])} |")
             p("")
-        p("Random values under ten bitmasks (numbered as CRoaring numbers them). "
-          "Masks 1, 2, 3, 5, 6 and 8 have no bits below bit 16, so every value "
-          "lands in its own container:")
+        p("Random values under CRoaring's ten bitmasks: 2^20 random values "
+          "inserted, then random operations on them. Every mask sets 20 bits; "
+          "they differ in where. Mask 0 puts them all below bit 16 (16 "
+          "containers, all the work inside them); masks 1, 2, 3, 5, 6 and 8 "
+          "put none there (2^20 keys with one value each, all the work in the "
+          "key index, keys added and removed at random); 4, 7 and 9 mix the "
+          "two. Grouped that way, as ranges"
+          + (":" if args.full else " (`--full` prints every mask):"))
         p("")
-        p("| benchmark \\ mask | " + " | ".join(str(i) for i in range(10)) + " |")
-        p("|---|" + "---|" * 10)
-        for fam in MASKED:
-            p(f"| {fam} | " + " | ".join(fmt(ratio(synthetic.get(f"{fam}/{i}"), "r64")) for i in range(10)) + " |")
+        if args.full:
+            p("| benchmark \\ mask | " + " | ".join(str(i) for i in range(10)) + " |")
+            p("|---|" + "---|" * 10)
+            for fam in MASKED:
+                p(f"| {fam} | " + " | ".join(fmt(ratio(synthetic.get(f"{fam}/{i}"), "r64")) for i in range(10)) + " |")
+        else:
+            p("| benchmark | containers only (mask 0) | key index only (1, 2, 3, 5, 6, 8) | mixed (4, 7, 9) |")
+            p("|---|---|---|---|")
+            for fam in MASKED:
+                def group(masks):
+                    return fmt_range([ratio(synthetic.get(f"{fam}/{i}"), "r64") for i in masks])
+                p(f"| {fam} | {group([0])} | {group([1, 2, 3, 5, 6, 8])} | {group([4, 7, 9])} |")
         p("")
         for impl, label in (("r64", "CRoaring (portable where a format is involved)"), ("r64_frozen", "CRoaring frozen")):
             rs = [ratio(r, impl) for r in synthetic.values()]

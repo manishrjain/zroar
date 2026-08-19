@@ -372,8 +372,11 @@ Formats: wherever a buffer is opened or written, r64 gets two columns —
 releases). zroar's format is of the frozen kind — little-endian by
 definition, unversioned, only zroar reads it — so frozen is the like-for-like
 column and portable the deployment-realistic one; both are reported. Frozen
-views are read-only, so MixedOLTP (which appends after opening) has no frozen
-column. Serialized sizes are reported for all three. zroar's per-input
+views are read-only, so MixedOLTP (which appends after opening) opens its
+frozen column as `frozen_view` plus `roaring64_bitmap_copy` — the writable
+bitmap a frozen-format user has to make first. (Measured, that is slower than
+the portable parse: the tree is built twice and every container cloned.)
+Serialized sizes are reported for all three. zroar's per-input
 bitmaps and synthetic shapes are `compact()`ed before their buffers are taken
 (at setup, untimed) — the counterpart of CRoaring's exact portable encoding
 and the `shrink_to_fit` its frozen format demands — so sizes and the

@@ -128,27 +128,12 @@ test "counting never changes what is built" {
     try testing.expect(bm.counters.sets == 5000);
 }
 
-test "sequential sets ride the cursor, alternating keys defeat it" {
-    var seq = try Bitmap.init(testing.allocator);
-    defer seq.deinit();
-    for (0..10_000) |i| _ = try seq.set(i);
-    // All 10k values share key 0, so every set after the first is answered
-    // by the cursor, less the few that follow an invalidation (container
-    // growth, cleanup).
-    try testing.expect(seq.counters.cursor_hits > 9_000);
-
-    var alt = try Bitmap.init(testing.allocator);
-    defer alt.deinit();
-    // Perfectly alternating keys never repeat the previous container, so
-    // the cursor never hits.
-    for (0..1000) |i| _ = try alt.set(((i % 2) << 16) | i);
-    try testing.expectEqual(@as(u64, 0), alt.counters.cursor_hits);
-}
-
-test "the cursor never changes what is built" {
+test "the lookup hint never changes what is built" {
     // Two interleaved keys with bursts long enough to repeat containers and
     // values chosen to force growth, relocation, and cleanup mid-stream —
-    // each of which must invalidate the cursor rather than leave it stale.
+    // each of which moves containers under the keys-node hint that `set`
+    // resolves its container through, and must not leave it pointing at a
+    // stale answer.
     var bm = try Bitmap.init(testing.allocator);
     defer bm.deinit();
     var ref = std.ArrayListUnmanaged(u64).empty;
@@ -163,7 +148,6 @@ test "the cursor never changes what is built" {
             if (try bm.set(x)) try ref.append(testing.allocator, x);
         }
     }
-    try testing.expect(bm.counters.cursor_hits > 0);
     try testing.expect(bm.counters.container_relocs > 0);
 
     std.mem.sort(u64, ref.items, {}, std.sort.asc(u64));
