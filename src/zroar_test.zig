@@ -1,3 +1,6 @@
+// Copyright 2026 Manish R Jain
+// SPDX-License-Identifier: Apache-2.0
+
 //! Unit tests for `zroar.zig`: point operations, container and keys-node
 //! growth, serialization round trips, and the set operations checked against a
 //! `std.AutoHashMapUnmanaged(u64, void)` reference set.

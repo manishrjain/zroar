@@ -1,3 +1,6 @@
+// Copyright 2026 Manish R Jain
+// SPDX-License-Identifier: Apache-2.0
+
 //! Merge kernels over the sorted, duplicate-free u16 payloads of array
 //! containers. Ported from sroar's setutil.go, which in turn comes from
 //! RoaringBitmap/roaring (Apache-2.0). Scalar throughout, except for the

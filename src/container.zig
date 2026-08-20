@@ -1,3 +1,6 @@
+// Copyright 2026 Manish R Jain
+// SPDX-License-Identifier: Apache-2.0
+
 //! Array and bitmap container kernels. A container is a `[]u16` slice of
 //! exactly its allocated size, laid out as a 4-u16 header followed by payload:
 //!

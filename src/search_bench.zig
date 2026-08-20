@@ -1,3 +1,6 @@
+// Copyright 2026 Manish R Jain
+// SPDX-License-Identifier: Apache-2.0
+
 //! Benchmarks for the two search paths: `Keys.search` over the keys node, and
 //! `container.array.find` over an array container's values.
 //!

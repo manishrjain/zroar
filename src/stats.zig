@@ -1,3 +1,6 @@
+// Copyright 2026 Manish R Jain
+// SPDX-License-Identifier: Apache-2.0
+
 //! Optional counters for the work zroar does moving memory around.
 //!
 //! A roaring bitmap in one flat buffer trades pointer chasing for memmoves, and

@@ -1,3 +1,6 @@
+// Copyright 2026 Manish R Jain
+// SPDX-License-Identifier: Apache-2.0
+
 //! The keys node: a `[]u64` view over the front of a bitmap's flat buffer,
 //! mapping each 48-bit key to the offset of its container.
 //!

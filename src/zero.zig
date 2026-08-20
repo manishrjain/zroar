@@ -1,3 +1,6 @@
+// Copyright 2026 Manish R Jain
+// SPDX-License-Identifier: Apache-2.0
+
 //! Zero-filling without going through `memset`.
 //!
 //! `@memset` lowers to a call to `memset`, and in a Zig 0.16 program that

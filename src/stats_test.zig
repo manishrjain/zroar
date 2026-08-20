@@ -1,3 +1,6 @@
+// Copyright 2026 Manish R Jain
+// SPDX-License-Identifier: Apache-2.0
+
 //! Tests for the optional counters in `stats.zig`.
 //!
 //! These run with the counters live: `stats.enabled` is true in test builds so

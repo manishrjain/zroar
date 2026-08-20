@@ -1,3 +1,6 @@
+// Copyright 2026 Manish R Jain
+// SPDX-License-Identifier: Apache-2.0
+
 //! Forward iterator over the values of a Bitmap, in ascending order.
 //!
 //! Unlike sroar's Go iterator, which uses the value 0 as its end sentinel and

@@ -1,3 +1,6 @@
+// Copyright 2026 Manish R Jain
+// SPDX-License-Identifier: Apache-2.0
+
 //! The single root of the test build.
 //!
 //! Zig only compiles what something references, so a test file nothing imports

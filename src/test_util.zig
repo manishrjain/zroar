@@ -1,3 +1,6 @@
+// Copyright 2026 Manish R Jain
+// SPDX-License-Identifier: Apache-2.0
+
 //! Test-only helpers shared by more than one test file.
 //!
 //! Nothing here is reachable from the library: the only path to this file is

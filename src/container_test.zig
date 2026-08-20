@@ -1,3 +1,6 @@
+// Copyright 2026 Manish R Jain
+// SPDX-License-Identifier: Apache-2.0
+
 //! Unit tests for `container.zig`: the array and bitmap container layouts, the
 //! conversion between them, and the two-container set operations.
 

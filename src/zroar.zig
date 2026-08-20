@@ -1,11 +1,13 @@
+// Copyright 2026 Manish R Jain
+// SPDX-License-Identifier: Apache-2.0
+
 //! zroar — serialized roaring bitmaps over u64 values.
 //!
 //! A bitmap is one flat, 8-byte-aligned buffer of u16s: a keys node followed by
 //! containers. That buffer *is* the serialized form, so `fromBuffer` is O(1)
 //! and allocation-free.
 //!
-//! Ported from https://github.com/dgraph-io/sroar; see DESIGN.md for the layout
-//! and for the places where this port deliberately diverges.
+//! Ported from https://github.com/dgraph-io/sroar; see DESIGN.md.
 
 const std = @import("std");
 const builtin = @import("builtin");

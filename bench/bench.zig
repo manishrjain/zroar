@@ -1,3 +1,6 @@
+// Copyright 2026 Manish R Jain
+// SPDX-License-Identifier: Apache-2.0
+
 //! zroar vs roaring64 (CRoaring's `roaring64_bitmap_t`) benchmarks.
 //!
 //! The comparison rests on CRoaring's own benchmarks, ported row for row so a

@@ -1,3 +1,6 @@
+// Copyright 2026 Manish R Jain
+// SPDX-License-Identifier: Apache-2.0
+
 //! Unit tests for `keys.zig`: search, ordered insertion and offset fixups over
 //! a standalone keys node.
 

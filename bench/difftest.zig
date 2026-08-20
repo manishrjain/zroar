@@ -1,3 +1,6 @@
+// Copyright 2026 Manish R Jain
+// SPDX-License-Identifier: Apache-2.0
+
 //! Differential test: identical operation streams into a zroar `Bitmap` and a
 //! CRoaring `roaring64.Bitmap64`.
 //!

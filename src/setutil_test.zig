@@ -1,3 +1,6 @@
+// Copyright 2026 Manish R Jain
+// SPDX-License-Identifier: Apache-2.0
+
 //! Unit tests for `setutil.zig`: the union, intersection and difference kernels
 //! over the sorted u16 payloads of array containers.
 

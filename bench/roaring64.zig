@@ -1,3 +1,6 @@
+// Copyright 2026 Manish R Jain
+// SPDX-License-Identifier: Apache-2.0
+
 //! The slice of CRoaring's `roaring64_bitmap_t` C API that the bench and the
 //! difftest drive, wrapped just enough to read like Zig.
 //!

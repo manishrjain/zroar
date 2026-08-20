@@ -1,3 +1,6 @@
+// Copyright 2026 Manish R Jain
+// SPDX-License-Identifier: Apache-2.0
+
 //! Property tests for zroar: long random operation streams and set algebra,
 //! both checked against a `std.AutoHashMapUnmanaged(u64, void)` reference
 //! model.

@@ -1,3 +1,6 @@
+// Copyright 2026 Manish R Jain
+// SPDX-License-Identifier: Apache-2.0
+
 //! Fixtures for the zroar vs roaring64 benchmarks.
 //!
 //! Everything the benchmarks touch is built here, untimed: the input bitmaps,
