@@ -1,34 +1,36 @@
 # zroar - Serialized Roaring Bitmaps in Zig
 
-zroar is a ground-up implementation of the popular roaring bitmaps library in a
-serialized form. Zroar keeps all the msb keys and containers in a single flat
-byte buffer, so the in-memory form of zroar is the serialized form, which can
-then be stored to disk or sent over network as is. When opening a zroar buffer,
+zroar is a ground-up implementation of the popular [roaring
+bitmaps](https://roaringbitmap.org/) data structure in a serialized form. zroar
+keeps all the MSB 48-bit keys (high48) and containers in a single flat byte
+buffer, so the in-memory form of zroar is the serialized form, which can then be
+stored to disk or sent over the network as is. When opening a zroar buffer,
 there's no parsing or per-container allocation. All read/write operations can be
 done on the buffer immediately.
 
-For benchmarks, we ported CRoaring benchmark suite to Zig. We expanded the
-benchmarks into warm open and cold open. warm open is the bitmap already in its
-in-memory format before benchmarking begins. The cold open adds a
-deserialization step upfront (which is what you'd expect to do in a database
-when reading a posting list stored as a byte array). For cold open, the
+For benchmarks, we ported the
+[CRoaring](https://github.com/roaringBitmap/CRoaring) benchmark suite to Zig. We
+expanded the benchmarks into warm open and cold open. Warm open means the bitmap
+is already in its in-memory format before benchmarking begins. Cold open adds a
+deserialization step upfront, which is what you'd expect to do in a database
+when reading a posting list stored as a byte array. For cold open, the
 benchmarks test both the *frozen* and the *portable* serialization versions of
-CRoaring. We also added OLTP synthetic dataset, which uses a zipfian
-distribution of integers.
+CRoaring. We also added an OLTP synthetic dataset, which uses a zipfian
+distribution of posting list sizes.
 
-With its design, zroar performs 2x to 9x faster (geometric mean across test
+By design, zroar performs 2x to 9x faster (geometric mean across test
 cases) than CRoaring on both warm and cold open benchmarks. zroar runs up to
-600x faster on serialization and deserialization. For cardinality estimations,
-zroar's performance ranges from 1.2x to ~300x across warm and cold opens. 
+600x faster on serialization and deserialization. For cardinality computations,
+zroar's performance ranges from 1.2x to ~300x across warm and cold opens.
 
-In fact, zroar is faster in 339 of 360 benchmark cases run. The only case where
-CRoaring decisively wins 2.5x against zroar is random interleaved insert/remove
-(random writes). All benchmarks were done with the latest version of CRoaring
-5.0 (released Aug 2026).
+In fact, zroar is faster in 339 of 360 benchmark cases run -- the main exception
+is random interleaved insert/remove, covered under downsides. All benchmarks
+were done with the latest version of CRoaring 5.0 (released Aug 2026), on a
+Ryzen 9 5950X with the benchmark process pinned to a core, fixed at 4.00 GHz.
 
-zroar is available under the Apache v2.0 [License][LICENSE]. Benchmark Report:
-[BENCHMARKS](BENCHMARKS.md). Layout: [DESIGN](DESIGN.md).
-
+Every number below is CRoaring's time ÷ zroar's on the same benchmark — above
+1 means zroar is faster. "Typical row" is the geometric mean with min–max in
+parens; "total time" sums all rows per side, where the expensive rows dominate.
 
 | headline | # tests | vs CRoaring | vs frozen |
 |---|---|---|---|
@@ -54,42 +56,46 @@ zroar is available under the Apache v2.0 [License][LICENSE]. Benchmark Report:
 | oltp | cold, opened portable | 5.61× (1.06×–217×) | zroar 35.00 ms · portable 79.12 ms (2.26×) |
 | oltp | cold, opened frozen | 3.96× (0.94×–86.69×) | zroar 35.00 ms · frozen 62.28 ms (1.78×) |
 
-## Why zroar and why is it faster?
+zroar is available under the Apache v2.0 [License](LICENSE). Benchmark Report:
+[BENCHMARKS](BENCHMARKS.md). Layout: [DESIGN](DESIGN.md). zroar is inspired by
+my earlier work on [sroar](https://github.com/manishrjain/sroar), written in Go.
+
+## Why zroar and Why Is It Faster?
 
 zroar was originally designed for systems which keep their posting lists /
-inverted indexes on disk, or have to send it over network. The design goal for
-zroar is to ensure that the serialized form can readily do both read and write
-operations without any performance penalty of a deserialization step.
+inverted indexes on disk, or have to send them over the network. The design goal
+for zroar is to ensure that the serialized form can readily do both read and
+write operations without any performance penalty of a deserialization step.
 
-However, zroar has proven to be more efficient than CRoaring even for warm
-purely in-memory operations, with no deserialization step involved. I think this
-design can be applied to a Roaring Bitmaps library in any language to achieve
-significant performance boost.
+However, zroar has proven to be more efficient than CRoaring even for warm,
+purely in-memory operations, with no deserialization step involved. I believe
+this design can be applied to a Roaring Bitmaps library in any language to
+achieve a significant performance boost (also proven by sroar in Go originally).
 
-Roaring Bitmaps contain bitmap and array containers (depending on the
-cardinality of the container). The MSB 48-bits (high48) are stored in an index,
-which points to the container. This container then stores the integers holding
-their LSB 16-bits. Depending upon how many integers are present, the container
-could be a sorted 16-bits unsigned int array (low16), or a bitmap.
+Roaring bitmaps split each integer into two parts: the most significant 48 bits
+(high48) and the least significant 16 (low16). The high48 goes into an index,
+which points to a container; the container stores the low16 of every integer
+sharing that high48. Depending upon how many integers are present, the
+container could be a sorted 16-bit unsigned int array, or a 65,536-bit bitmap.
 
-CRoaring allocates memory for each of these containers, holding the high48 in an
-adaptive radix tree (ART), holding memory pointers to these containers. Reaching
-a container means following the ART, where each node is a single byte of the
-high48. That'd be 7 memory dereferences (high48 = 6 bytes + container pointer)
-to reach the container.
+CRoaring keeps the high48 index in an adaptive radix tree (ART), and allocates
+each container separately on the heap. Reaching a container means walking the
+ART — one byte of the high48 per level, typically 2–3 levels after path
+compression — and then following three more pointers: the ART leaf holds an
+index into a containers array, whose entry points to a container header, which
+points to the payload. That's five to six dependent memory loads, each waiting
+on the address from the previous one, and each a potential cache miss.
 
-zroar flips that design by allocating one memory buffer, keeping `(high48,
-offset)` pairs in the front, where the offset stores the container offset in the
-same buffer. The container in turn stores the size of container (u16), type of
-container (array or bitmap, u16), and cardinality (number of integers container
-is holding, u32).
+zroar flips that design by allocating one flat buffer for everything. The
+front of the buffer keeps sorted (high48, offset) pairs, where the offset says
+where in the same buffer the container lives. The container in turn starts
+with a small header: size of container (u16), type of container (array or
+bitmap, u16), and cardinality (number of integers the container holds, u32).
+Reaching a container is a binary search over the sorted pairs plus one offset
+add — no pointers anywhere, which is also why the buffer itself is the
+serialized form.
 
-Note: zroar does not support a third, run container (supported by CRoaring). The
-run container adds significant complexity (expecting 1000+ LOC) and the
-benefit/applicability to database systems isn't clear, which is what I'm using
-zroar for. This could change in future if needs evolve.
-
-## Using it
+## Using It
 
     zig fetch --save git+https://github.com/manishrjain/zroar
 
@@ -114,7 +120,7 @@ assert(bm.getCardinality() == 2);
 // optional step of 'compact', which achieves the smallest possible size.
 try bm.compact(); // OPTIONAL
 
-const bytes = try bm.toBuffer(allocator);
+const bytes = bm.toBuffer();
 // write to disk or ship bytes over the network.
 
 // Open: O(1). With .borrow, `bytes` is never touched; the first
@@ -130,12 +136,12 @@ Set algebra: `And`/`Or`/`fastOr` (materializing), `andInPlace`/`orInPlace`/
 `andNotInPlace`, and fused `{and,or,andNot}Cardinality` that count without
 materializing.
 
-## Build and test
+## Build and Test
 
     zig build test          # unit + property tests (Debug and ReleaseSafe)
     zig build searchbench   # keys/array search microbench, no dependencies
 
-## Benchmarks against CRoaring
+## Benchmarks Against CRoaring
 
     bench/fetch_croaring.sh                  # clone CRoaring + realdata into /tmp/CRoaring
     bench/run_all.sh -o results/run          # full suite, pinned; writes .tsv + report.md
@@ -156,43 +162,42 @@ No run containers, no 32-bit variant.
 
 1. **No pointer chasing**
 
-In CRoaring, reaching a container means walking the ART over the high64 nodes,following the ART, where each node is a
-single byte of the high48. That'd be 7 memory dereferences (6 bytes from high48
-and container pointer) to reach the container. Every hop is dependent on the
-previous data, and each could be a cache-miss.
+As described above, in CRoaring, reaching a container takes five to six
+dependent memory loads (the ART walk plus three pointer hops). Every load waits
+on the address from the previous one, and each could be a cache-miss.
 
-zroar has no pointers. All the high48 keys are kept sorted, so we can binary
-search (+ scan) over them without any pointer chasing, and most likely using the
-same cache lines that were already touched.
+zroar has no pointers, only offsets. All the high48 keys are kept grouped and
+sorted, so we can binary search and linear scan over them without any pointer
+chasing, and most likely using the same cache lines that were already touched.
 
-2. **Data locality*
+2. **Data locality**
 
 In CRoaring, container n and n+1 live wherever malloc happens to put them, which
 might be pages apart. The hardware prefetcher sees no pattern.
 
 In zroar, all the containers are colocated tightly (even accounting for a little
-bit of slack kept in array containers to grow). Reading the containers
-can just walk forward in the same underlying buffer, using memory-prefetching to
-keep operations efficient.
+bit of slack kept in array containers to grow). Reading the containers just
+walks forward in the same underlying buffer -- the access pattern the hardware
+prefetcher is built for.
 
 3. **No small allocations**
 
-CRoaring bitmaps allocates memory per container, which leads to lots of small
+CRoaring allocates memory per container, which leads to lots of small
 allocations, one per container, then many times as the container grows.
 
 zroar grows by remap/realloc of the entire buffer. This reduces the number of
 allocations and avoids memory fragmentation.
 
-Though, this is also the cause for where zroar slightly lags CRoaring -- random
-inserts. If a container in the middle of the buffer grows, then to expand that
-container, zroar has to expand the buffer and move the containers on the right
-side (think inserting in the middle of an array), while CRoaring only has to
+Though, this is also the main case where CRoaring outperforms zroar -- random
+interleaved insert/remove. If a container in the middle of the buffer grows,
+then to expand that container, zroar has to logically move all the memory to its
+right (think inserting in the middle of an array), while CRoaring only has to
 expand that one container's memory.
 
 zroar reduces that cost by proactively moving the expanding container to the end
 of the buffer to make future expansions cheaper. It further uses remap to
 request the memory allocator to update the size of the buffer without moving
-memory making expansion cost zero, whenever possible.
+memory, making expansion cost close to zero, whenever possible.
 
 4. **No serialization / deserialization, frozen/portable, warm/cold**
 
@@ -207,14 +212,13 @@ The portable format generates a full writeable in-memory form and also requires
 full deserialize to use.
 
 zroar's in-memory format is the serialized format. And the `fromBuffer` is just
-a pointer cast and store in the `Bitmap` struct, which takes nanoseconds, which
-makes zroar 600x faster on average than CRoaring.
+a pointer cast and store in the `Bitmap` struct, which takes nanoseconds, making
+zroar 600x faster on the serialize/deserialize benchmark compared to CRoaring.
 
 zroar does have a `compact` API, which can be optionally used to make the bitmap
 as small as possible (say before long term storage), removing any paddings that
-might exist in array containers (to support growth). In this form, zroar mostly
-takes <5% extra space compared to CRoaring frozen and portable formats.
-
+might exist in array containers (to support growth). In this form, zroar takes
+<5% extra compared to frozen, and <20% extra compared to portable format.
 
 | set | bitmaps | values | zroar | r64 portable | run-container saving | r64 frozen |
 |---|---|---|---|---|---|---|
@@ -223,32 +227,44 @@ takes <5% extra space compared to CRoaring frozen and portable formats.
 | weather_sept_85 | 200 | 12,870,627 | 8.6 MB | 8.3 MB (0.96× of zroar) | 1% | 8.3 MB (0.97×) |
 | oltp | 200 | 2,486,531 | 5.9 MB | 5.0 MB (0.85× of zroar) | 0% | 5.7 MB (0.97×) |
 
+5. **Simpler, smaller codebase**
 
-5. Simpler, smaller codebase
-
-zroar codebase is also simple and much smaller. The main logic (excluding tests
+The zroar codebase is also simple and much smaller. The main logic (excluding tests
 and benchmarking code) is ~2000 lines of code, compared to CRoaring's 17,000
 lines of code for the 64-bit version (excluding the 32-bit version, tests,
-bench). In CRoaring, just roaring64.c and art.c itself is >4K LOC.
+bench). In CRoaring, just roaring64.c and art.c by themselves are >4K LOC.
 
-This is due to the simpler design of zroar which avoids the need for a complex
-adaptive radix tree (ART) implementation, serialization / deserialization,
-frozen views which accommodate the ART, two container types instead of three,
-and portable SIMD loops which enjoy built-in support from Zig.
+This is due to the simpler design of zroar: it avoids the need for a complex
+adaptive radix tree (ART) implementation, serialization / deserialization, and
+frozen views which accommodate the ART; it has two container types instead of
+three; and it writes each SIMD kernel once in portable Zig instead of per-ISA
+variants plus dispatch.
 
 ## zroar Downsides Compared to CRoaring
 
-This is purely a Zig only library. It does not support the portable serialized
-format of CRoaring, though that could be added if required.
+This is a Zig-only library, with no bindings in other languages yet. It does not
+support the portable serialized format of CRoaring, though that could be added
+if required (making it work nicely with the broader roaring bitmaps ecosystem).
 
 zroar only supports 64-bit integers currently (I don't have a need for 32-bit
-ints). These are omissions for the sake of simplicity than any limitation in the
-design of zroar. Over time as needs arise, these features could be added.
+ints).
 
-The only case where CRoaring decisively wins 2.5x against zroar is random
+zroar does not support a third, run container (supported by CRoaring). The run
+container adds significant complexity (expecting 1000+ LOC) and the
+benefit/applicability to database systems isn't clear, which is what I'm using
+zroar for. As such, I didn't include datasets in benchmarks which were designed
+to showcase run container efficiency.
+
+All the above are omissions for the sake of simplicity rather than any
+limitation in the design of zroar. Over time as needs arise, these features
+could be added.
+
+The only case where CRoaring decisively wins 3x against zroar is random
 interleaved insert/remove (random writes). This case requires zroar to
 constantly move memory slowing it down, while CRoaring can just expand or delete
-individual containers. A way to alleviate this is to sort the integers before
-passing to zroar. On sorted inserts, zroar is 1.3x-4x faster, with its advantage
-growing when many integers end up in the same container.
+individual containers.
+
+If writes arrive in batches, sort them first. On sorted inserts, zroar is
+1.3x-4x faster, with its advantage growing when many integers end up in the same
+container.
 

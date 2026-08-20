@@ -12,6 +12,9 @@
 #   -o prefix  output prefix (default bench/results/run); writes
 #              <prefix>-<set>.tsv and <prefix>-report.md
 #   -c cpu     CPU to pin the bench to (default $BENCH_CPU, else 3)
+#   -n         run at nice -20, asking sudo for a one-time renice if needed;
+#              without -n the priority is still taken when it is free
+#              (RLIMIT_NICE), but sudo is never prompted
 #   -- ...     passed to every bench run, e.g. -- --time 200
 #
 # The report is rebuilt from every <prefix>-*.tsv present, so running one
@@ -23,10 +26,11 @@
 # the saving per set. uscensus2000 is tiny (30 values per file) and says
 # little either way.
 #
-# Frequency policy is left alone: the bench records the governor, boost and
-# SMT state it ran under and the report shows them, so set the machine up
-# first if the numbers are meant to be kept. The full default set takes about
-# 25 minutes at 500 ms per row; the synthetic grid is most of it.
+# Frequency policy is left alone: the bench records the governor, boost,
+# frequency range (scaling_min_freq/scaling_max_freq) and SMT state it ran
+# under and the report shows them, so set the machine up first if the numbers
+# are meant to be kept. The full default set takes about 25 minutes at 500 ms
+# per row; the synthetic grid is most of it.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(dirname "$here")
@@ -35,11 +39,13 @@ realdata=${CROARING_DIR:-/tmp/CRoaring}/benchmarks/realdata
 prefix=$here/results/run
 cpu=${BENCH_CPU:-3}
 sets=""
-while getopts "d:o:c:h" opt; do
+want_nice=0
+while getopts "d:o:c:nh" opt; do
     case $opt in
         d) sets="$sets $OPTARG" ;;
         o) prefix=$OPTARG ;;
         c) cpu=$OPTARG ;;
+        n) want_nice=1 ;;
         *) sed -n '2,/^set -eu/{/^set -eu/!s/^# \{0,1\}//p}' "$0"; exit 2 ;;
     esac
 done
@@ -56,6 +62,25 @@ if command -v taskset >/dev/null 2>&1; then
 else
     echo "taskset not found; running unpinned" >&2
     bench="$root/zig-out/bin/bench"
+fi
+
+# Highest scheduling priority available, so that another runnable task
+# landing on the pinned core barely gets a slice. Negative nice needs root
+# or RLIMIT_NICE (ulimit -e), so probe first: the inner `nice` prints the
+# niceness the outer one obtained. Without the limit, -n asks sudo to renice
+# this shell instead: children inherit the niceness, so the bench runs at
+# -20 while everything still executes as the invoking user — root runs
+# nothing but the renice, and the output files stay ours. Priority only
+# biases the scheduler; for hard exclusion, isolate the core (chrt -f,
+# cset shield, isolcpus).
+if [ "$(nice -n -20 nice 2>/dev/null)" = "-20" ]; then
+    bench="nice -n -20 $bench"
+elif [ "$want_nice" = 1 ] && [ -t 0 ] && command -v sudo >/dev/null 2>&1; then
+    echo "asking sudo to renice this shell to -20" >&2
+    sudo renice -n -20 -p $$ >/dev/null \
+        || echo "sudo declined; continuing at normal priority" >&2
+elif [ "$want_nice" = 1 ]; then
+    echo "cannot set nice -20 (needs root or RLIMIT_NICE); normal priority" >&2
 fi
 
 mkdir -p "$(dirname "$prefix")"

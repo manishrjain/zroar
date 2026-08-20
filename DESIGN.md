@@ -207,15 +207,17 @@ Conversion thresholds:
   Valid until the bitmap grows or is deinited. Empty bitmap returns its
   (minimal, valid) buffer — no null special case.
 - `toBufferCopy(self, allocator) !AlignedU8` — owning copy.
-- `fromBuffer(allocator, buf: AlignedU8, .borrow | .own) !Bitmap` — O(1),
-  no copy: `buf.len % 2 == 0` and `buf.len >= minimal` required (else a
-  fresh empty bitmap); an unknown version is refused
+- `fromBuffer(allocator, buf: AlignedConstU8, .borrow | .own) !Bitmap` —
+  O(1), no copy: `buf.len % 2 == 0` and `buf.len >= minimal` required
+  (else a fresh empty bitmap); an unknown version is refused
   (`error.UnsupportedFormatVersion`). With `.borrow`, `buf` is never
   written to or freed and must outlive the bitmap: every mutation begins
-  with `ensureOwned`, which copies the buffer out first. With `.own`, the
-  bitmap mutates, remaps and (in `deinit`) frees `buf` itself; the
-  transfer is unconditional — the empty-bitmap and error returns free an
-  owned `buf` too.
+  with `ensureOwned`, which copies the buffer out first — so genuinely
+  read-only memory (`toBuffer`'s view, a read-only mapping) opens without
+  a copy. With `.own`, the bitmap mutates, remaps and (in `deinit`) frees
+  `buf` itself; it must be a writable allocation made by `allocator`, and
+  the transfer is unconditional — the empty-bitmap and error returns free
+  an owned `buf` too.
 - `fromBufferCopy(allocator, buf: []const u8) !Bitmap` — copy up front
   (also the path for unaligned input).
 - **Format is little-endian by definition** — not "native-endian". On

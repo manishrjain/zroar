@@ -179,7 +179,7 @@ def main():
     for path in args.files:
         meta, rows = parse(path)
         versions.add((meta.get("zig", "?"), meta.get("croaring", "?")))
-        machines[tuple(meta.get(k, "unknown") for k in ("cpu", "governor", "boost", "smt", "cpus"))] = None
+        machines[tuple(meta.get(k, "unknown") for k in ("cpu", "governor", "boost", "freq_range", "smt", "cpus"))] = None
         ds = meta.get("dataset", os.path.basename(path))
         per_ds = {n: r for n, r in rows.items() if r["suite"] in ("realdata", "cold")}
         if per_ds:
@@ -204,7 +204,7 @@ def main():
       f"files ({vs}, ReleaseFast). Ratios; absolute times (µs) are in the .tsv files.")
     p("")
     for m in machines:
-        p(f"Measured on {m[0]}; governor {m[1]}, boost {m[2]}, SMT {m[3]}, pinned to CPU(s) {m[4]}.")
+        p(f"Measured on {m[0]}; governor {m[1]}, boost {m[2]}, freq range {m[3]}, SMT {m[4]}, pinned to CPU(s) {m[5]}.")
     p("")
     p(PREAMBLE)
 

@@ -931,6 +931,11 @@ const Machine = struct {
     cpu: []const u8 = "unknown",
     governor: []const u8 = "unknown",
     boost: []const u8 = "unknown",
+    /// The frequency range the CPU the bench runs on may scale over, as
+    /// "[min, max] GHz" (scaling_min_freq / scaling_max_freq). The max is
+    /// the knob an operator uses to fix the clock, so recording it is what
+    /// makes a "fixed at X GHz" claim reproducible from the data.
+    freq_range: []const u8 = "unknown",
     smt: []const u8 = "unknown",
     /// The CPUs this process may run on, as `taskset` would print them.
     cpus: []const u8 = "unknown",
@@ -960,6 +965,15 @@ const Machine = struct {
             .{first_cpu},
         ) catch "";
         if (readTrimmed(io, allocator, gov_path)) |g| m.governor = g;
+        const min_ghz = readGhz(io, allocator, first_cpu, "scaling_min_freq");
+        const max_ghz = readGhz(io, allocator, first_cpu, "scaling_max_freq");
+        if (min_ghz != null or max_ghz != null) {
+            m.freq_range = std.fmt.allocPrint(
+                allocator,
+                "[{s}, {s}] GHz",
+                .{ min_ghz orelse "?", max_ghz orelse "?" },
+            ) catch "unknown";
+        }
         if (readTrimmed(io, allocator, "/sys/devices/system/cpu/cpufreq/boost")) |b| {
             m.boost = if (std.mem.eql(u8, b, "1")) "on" else "off";
         }
@@ -967,6 +981,27 @@ const Machine = struct {
             m.smt = if (std.mem.eql(u8, v, "1")) "on" else "off";
         }
         return m;
+    }
+
+    /// A cpufreq file of the given CPU, kHz formatted as "G.GG", or null.
+    fn readGhz(
+        io: std.Io,
+        allocator: std.mem.Allocator,
+        cpu: usize,
+        comptime file: []const u8,
+    ) ?[]const u8 {
+        const path = std.fmt.allocPrint(
+            allocator,
+            "/sys/devices/system/cpu/cpu{d}/cpufreq/" ++ file,
+            .{cpu},
+        ) catch return null;
+        const s = readTrimmed(io, allocator, path) orelse return null;
+        const khz = std.fmt.parseInt(u64, s, 10) catch return null;
+        return std.fmt.allocPrint(
+            allocator,
+            "{d}.{d:0>2}",
+            .{ khz / 1_000_000, (khz / 10_000) % 100 },
+        ) catch null;
     }
 
     /// Streamed rather than size-hinted: /proc and /sys files report size 0.
@@ -1105,6 +1140,7 @@ const Out = struct {
         try w.print("meta\tcpu\t{s}\n", .{opts.machine.cpu});
         try w.print("meta\tgovernor\t{s}\n", .{opts.machine.governor});
         try w.print("meta\tboost\t{s}\n", .{opts.machine.boost});
+        try w.print("meta\tfreq_range\t{s}\n", .{opts.machine.freq_range});
         try w.print("meta\tsmt\t{s}\n", .{opts.machine.smt});
         try w.print("meta\tcpus\t{s}\n", .{opts.machine.cpus});
         try w.print("meta\tdataset\t{s}\n", .{opts.dataset});
@@ -1271,10 +1307,11 @@ pub fn main(init: std.process.Init) !void {
         .oltp => "oltp (auto-increment row-ids)",
     };
     std.debug.print(
-        "zroar bench: zig {s}, CRoaring {s}\nmachine: {s}; governor {s}, boost {s}, smt {s}, cpus {s}\ndata source: {s}\n",
+        "zroar bench: zig {s}, CRoaring {s}\nmachine: {s}; governor {s}, boost {s}, freq range {s}, smt {s}, cpus {s}\ndata source: {s}\n",
         .{
-            builtin.zig_version_string, croaring.version, opts.machine.cpu,  opts.machine.governor,
-            opts.machine.boost,         opts.machine.smt, opts.machine.cpus, source,
+            builtin.zig_version_string, croaring.version,        opts.machine.cpu, opts.machine.governor,
+            opts.machine.boost,         opts.machine.freq_range, opts.machine.smt, opts.machine.cpus,
+            source,
         },
     );
     var ds = datasets.load(io, allocator, dir_path, mode) catch |err| {

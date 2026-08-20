@@ -2080,6 +2080,17 @@ test "the format version is the buffer's first two bytes and is enforced" {
     try testing.expectEqual(@as(u64, 3), again.getCardinality());
 }
 
+test "fromBuffer accepts a const buffer with .borrow" {
+    // toBuffer's borrowed view is const; .borrow never writes through the
+    // buffer, so it opens directly — no copy, no @constCast at the caller.
+    var bm = try testBitmap(&.{ 5, 6, 1 << 33 });
+    defer bm.deinit();
+    var view = try Bitmap.fromBuffer(testing.allocator, bm.toBuffer(), .borrow);
+    defer view.deinit();
+    try testing.expect(view.contains(1 << 33));
+    try testing.expectEqual(@as(u64, 3), view.getCardinality());
+}
+
 test "fromBuffer with .own transfers the buffer, even on failure" {
     // Success: the bitmap frees the buffer in deinit, and a mutation works
     // on it directly instead of copying out. testing.allocator's leak check

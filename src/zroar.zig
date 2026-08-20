@@ -661,11 +661,12 @@ pub const Bitmap = struct {
     pub const Ownership = enum {
         /// The caller keeps the buffer: it is never written to or freed, and
         /// must outlive the bitmap. The first mutation copies it out
-        /// (`ensureOwned`).
+        /// (`ensureOwned`), so read-only memory — `toBuffer`'s view, a
+        /// read-only mapping — is fine.
         borrow,
         /// The bitmap takes the buffer: mutations work on it directly, growth
-        /// remaps it, `deinit` frees it. It must be an entire allocation made
-        /// by the same allocator.
+        /// remaps it, `deinit` frees it. It must be an entire (and therefore
+        /// writable) allocation made by the same allocator.
         own,
     };
 
@@ -679,7 +680,7 @@ pub const Bitmap = struct {
     /// be a bitmap at all.
     pub fn fromBuffer(
         allocator: std.mem.Allocator,
-        buf: AlignedU8,
+        buf: AlignedConstU8,
         ownership: Ownership,
     ) !Bitmap {
         if (buf.len % 2 != 0 or buf.len < min_buffer_bytes) {
@@ -697,7 +698,11 @@ pub const Bitmap = struct {
             return error.UnsupportedFormatVersion;
         }
 
-        const p: [*]align(8) u16 = @ptrCast(buf.ptr);
+        // Sound because writes only ever happen when `owned` is true, and
+        // `owned` is true only for memory that came from an allocator: with
+        // `.borrow` every mutation begins with `ensureOwned`'s copy-out, and
+        // with `.own` the contract requires a writable allocation.
+        const p: [*]align(8) u16 = @ptrCast(@constCast(buf.ptr));
         return .{
             .data = p[0 .. buf.len / 2],
             .cap = buf.len / 2,
