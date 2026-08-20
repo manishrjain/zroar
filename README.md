@@ -3,10 +3,41 @@
 zroar is a ground-up implementation of the popular [roaring
 bitmaps](https://roaringbitmap.org/) data structure in a serialized form. zroar
 keeps all the MSB 48-bit keys (high48) and containers in a single flat byte
-buffer, so the in-memory form of zroar is the serialized form, which can then be
+buffer, so the **in-memory form of zroar is the serialized form,** which can then be
 stored to disk or sent over the network as is. When opening a zroar buffer,
 there's no parsing or per-container allocation. All read/write operations can be
 done on the buffer immediately.
+
+```
+zroar — one single buffer
+
+  ┌───────────────────────────┐   toBuffer():   the buffer, as is
+  │        flat buffer        │
+  │   in memory == on disk    │   fromBuffer(): pointer cast +
+  └───────────────────────────┘                 version check, ~ns
+
+Flat buffer internal:
+  ┌───────────────────────────┬──────┬────────────┬──────┬─────┐
+  │  sorted (high48, offset)  │  C0  │     C1     │  C2  │ ... │
+  │  pairs (the keys node)    │      │            │      │     │
+  └─────────────┬─────────────┴──────┴────────────┴──────┴─────┘
+                │  binary search + scan               ▲
+                └────────── offset add ───────────────┘
+
+C1, zoomed in:
+  ┌───────┬───────┬─────────────┬───────────────────────────────┐
+  │ size  │ type  │ cardinality │ payload                       │
+  │ (u16) │ (u16) │    (u32)    │ array:  sorted low16 values   │
+  │       │       │             │ bitmap: 65,536 bits           │
+  └───────┴───────┴─────────────┴───────────────────────────────┘
+```
+
+## Benchmarks Against CRoaring
+
+Every benchmark comparison, one dot each (click through for hover details
+naming each test):
+
+[![zroar vs CRoaring, one dot per benchmark comparison](static/bench-plot.svg)](static/bench-plot.svg)
 
 For benchmarks, we ported the
 [CRoaring](https://github.com/roaringBitmap/CRoaring) benchmark suite to Zig. We
@@ -18,12 +49,12 @@ benchmarks test both the *frozen* and the *portable* serialization versions of
 CRoaring. We also added an OLTP synthetic dataset, which uses a zipfian
 distribution of posting list sizes.
 
-By design, zroar performs 2x to 9x faster (geometric mean across test
+**By design, zroar performs 2x to 9x faster** (geometric mean across test
 cases) than CRoaring on both warm and cold open benchmarks. zroar runs up to
 600x faster on serialization and deserialization. For cardinality computations,
-zroar's performance ranges from 1.2x to ~300x across warm and cold opens.
+zroar is 4.8x faster (geometric mean), going up to ~290x on cold opens.
 
-In fact, zroar is faster in 339 of 360 benchmark cases run -- the main exception
+In fact, **zroar is faster in 339 of 360 benchmark cases run** -- the main exception
 is random interleaved insert/remove, covered under downsides. All benchmarks
 were done with the latest version of CRoaring 5.0 (released Aug 2026), on a
 Ryzen 9 5950X with the benchmark process pinned to a core, fixed at 4.00 GHz.
@@ -34,33 +65,66 @@ parens; "total time" sums all rows per side, where the expensive rows dominate.
 
 | headline | # tests | vs CRoaring | vs frozen |
 |---|---|---|---|
-| realdata, bitmaps in memory (all data sets) | 36 | 2.15× | – |
-| cold, every bitmap opened inside the call (all data sets) | 40 | 6.71× (portable) | 3.35× |
-| synthetic, operations (Contains/Insert/Remove/Random; families weighted equally) | 132 | 2.16× | – |
-| synthetic, Serialize + Deserialize | 56 | 622× (portable) | 267× |
-| synthetic, all families | 188 | 8.91× (portable where a format is involved) | – |
+| realdata, bitmaps in memory (all data sets) | 36 | 2.20× | – |
+| cold, every bitmap opened inside the call (all data sets) | 40 | 6.92× (portable) | 3.44× |
+| synthetic, operations (Contains/Insert/Remove/Random; families weighted equally) | 132 | 2.18× | – |
+| synthetic, Serialize + Deserialize | 56 | 615× (portable) | 259× |
+| synthetic, all families | 188 | 8.92× (portable where a format is involved) | – |
 
 
 | set | table | typical row | total time |
 |---|---|---|---|
-| census1881 | realdata (in memory) | 2.46× (0.88×–14.12×) | zroar 1.48 ms · r64 6.95 ms (4.71×) |
-| census1881 | cold, opened portable | 11.82× (1.81×–108×) | zroar 2.46 ms · portable 11.47 ms (4.66×) |
-| census1881 | cold, opened frozen | 4.72× (1.35×–25.14×) | zroar 2.46 ms · frozen 9.51 ms (3.87×) |
-| census-income | realdata (in memory) | 2.25× (0.91×–13.98×) | zroar 12.43 ms · r64 52.94 ms (4.26×) |
-| census-income | cold, opened portable | 5.12× (1.11×–156×) | zroar 12.69 ms · portable 57.45 ms (4.53×) |
-| census-income | cold, opened frozen | 2.44× (0.95×–16.31×) | zroar 12.69 ms · frozen 53.62 ms (4.23×) |
-| weather_sept_85 | realdata (in memory) | 2.14× (0.90×–13.35×) | zroar 32.40 ms · r64 108.05 ms (3.34×) |
-| weather_sept_85 | cold, opened portable | 5.96× (1.03×–289×) | zroar 33.14 ms · portable 122.68 ms (3.70×) |
-| weather_sept_85 | cold, opened frozen | 2.77× (0.90×–31.05×) | zroar 33.14 ms · frozen 109.91 ms (3.32×) |
-| oltp | realdata (in memory) | 1.81× (0.87×–12.07×) | zroar 33.38 ms · r64 47.07 ms (1.41×) |
-| oltp | cold, opened portable | 5.61× (1.06×–217×) | zroar 35.00 ms · portable 79.12 ms (2.26×) |
-| oltp | cold, opened frozen | 3.96× (0.94×–86.69×) | zroar 35.00 ms · frozen 62.28 ms (1.78×) |
+| census1881 | realdata (in memory) | 2.64× (0.93×–19.11×) | zroar 1.02 ms · r64 6.94 ms (6.81×) |
+| census1881 | cold, opened portable | 12.57× (1.78×–103×) | zroar 2.03 ms · portable 11.55 ms (5.69×) |
+| census1881 | cold, opened frozen | 4.94× (1.34×–23.04×) | zroar 2.03 ms · frozen 9.49 ms (4.67×) |
+| census-income | realdata (in memory) | 2.26× (0.92×–12.57×) | zroar 12.16 ms · r64 57.61 ms (4.74×) |
+| census-income | cold, opened portable | 5.24× (1.14×–158×) | zroar 12.42 ms · portable 62.25 ms (5.01×) |
+| census-income | cold, opened frozen | 2.53× (0.94×–17.57×) | zroar 12.42 ms · frozen 58.42 ms (4.70×) |
+| weather_sept_85 | realdata (in memory) | 2.14× (0.91×–12.48×) | zroar 32.04 ms · r64 116.25 ms (3.63×) |
+| weather_sept_85 | cold, opened portable | 6.08× (1.09×–286×) | zroar 32.64 ms · portable 131.60 ms (4.03×) |
+| weather_sept_85 | cold, opened frozen | 2.82× (0.91×–30.32×) | zroar 32.64 ms · frozen 118.20 ms (3.62×) |
+| oltp | realdata (in memory) | 1.84× (0.86×–12.21×) | zroar 32.45 ms · r64 47.36 ms (1.46×) |
+| oltp | cold, opened portable | 5.71× (1.09×–214×) | zroar 34.00 ms · portable 79.65 ms (2.34×) |
+| oltp | cold, opened frozen | 3.99× (0.97×–84.42×) | zroar 34.00 ms · frozen 62.42 ms (1.84×) |
 
 zroar is available under the Apache v2.0 [License](LICENSE). Benchmark Report:
 [BENCHMARKS](BENCHMARKS.md). Layout: [DESIGN](DESIGN.md). zroar is inspired by
 my earlier work on [sroar](https://github.com/manishrjain/sroar), written in Go.
 
 ## Why zroar and Why Is It Faster?
+
+```
+CRoaring — reaching a container is a chain of dependent loads,
+every box a separate heap allocation:
+
+  art_t ──► node ──► leaf ──► containers[i] ──► header ──► payload
+            └─ ART ──┘           ptr array       struct     the bits
+              2-3 nodes
+
+  each arrow is a load whose address comes out of the previous load:
+  nothing to prefetch, and any arrow can be a cache miss.
+
+zroar — one buffer, offsets instead of pointers:
+
+  ┌───────────────────────────┬──────┬────────────┬──────┬─────┐
+  │  sorted (high48, offset)  │  C0  │     C1     │  C2  │ ... │
+  │  pairs (the keys node)    │      │            │      │     │
+  └─────────────┬─────────────┴──────┴────────────┴──────┴─────┘
+                │  binary search + scan               ▲
+                └────────── offset add ───────────────┘
+
+  the search touches a few adjacent cache lines in one place;
+  the "dereference" is an add into the same buffer.
+
+  every container starts with an 8-byte header, payload right behind:
+
+       C1, zoomed in
+  ┌───────┬───────┬─────────────┬───────────────────────────────┐
+  │ size  │ type  │ cardinality │ payload                       │
+  │ (u16) │ (u16) │    (u32)    │ array:  sorted low16 values   │
+  │       │       │             │ bitmap: 65,536 bits           │
+  └───────┴───────┴─────────────┴───────────────────────────────┘
+```
 
 zroar was originally designed for systems which keep their posting lists /
 inverted indexes on disk, or have to send them over the network. The design goal
@@ -199,6 +263,29 @@ of the buffer to make future expansions cheaper. It further uses remap to
 request the memory allocator to update the size of the buffer without moving
 memory, making expansion cost close to zero, whenever possible.
 
+```
+C1 is full and must grow, but C2 sits right behind it:
+
+  ┌──────┬────┬──────┬────────┐
+  │ keys │ C0 │ C1 ! │   C2   │
+  └──────┴────┴──────┴────────┘
+
+zroar does not shift C2 (and everything after it) to the right; it
+moves C1 to the end instead — one copy — leaving a dead slot that
+the keys node no longer points at:
+
+  ┌──────┬────┬──────┬────────┬─────────┐
+  │ keys │ C0 │ dead │   C2   │ C1 (2x) │
+  └──────┴────┴──────┴────────┴─────────┘
+
+dead slots are bounded: past 25% of the buffer, the next write runs
+cleanup, which compacts them away:
+
+  ┌──────┬────┬────────┬─────────┐
+  │ keys │ C0 │   C2   │ C1 (2x) │
+  └──────┴────┴────────┴─────────┘
+```
+
 4. **No serialization / deserialization, frozen/portable, warm/cold**
 
 CRoaring has two deserialization formats: frozen and portable. Frozen
@@ -210,6 +297,26 @@ form, paying the full cost of deserialization.
 
 The portable format generates a full writeable in-memory form and also requires
 full deserialize to use.
+
+```
+CRoaring — memory and disk are different forms; every open converts:
+
+  ┌────────────────┐    serialize     ┌───────────┐
+  │  object graph  │ ───────────────► │   bytes   │
+  │  ART, headers, │                  │  on disk  │
+  │  payloads      │ ◄─────────────── │           │
+  └────────────────┘    deserialize   └───────────┘
+             portable: full parse, alloc per container
+             frozen:   O(#containers) mallocs, read-only view;
+                       writing means building the graph anyway
+
+zroar — one form; opening is a pointer cast:
+
+  ┌───────────────────────────┐   toBuffer():   the buffer, as is
+  │        flat buffer        │
+  │   in memory == on disk    │   fromBuffer(): pointer cast +
+  └───────────────────────────┘                 version check, ~ns
+```
 
 zroar's in-memory format is the serialized format. And the `fromBuffer` is just
 a pointer cast and store in the `Bitmap` struct, which takes nanoseconds, making

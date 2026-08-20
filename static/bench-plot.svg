@@ -1,0 +1,449 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="739" viewBox="0 0 880 739" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">
+<text x="8" y="24" font-size="15" fill="#888888">zroar vs CRoaring roaring64 -- every benchmark comparison</text>
+<text x="8" y="44" font-size="11" fill="#888888">CRoaring's time / zroar's; piecewise log scale, stretched near 1x. Right of the 1x line = zroar faster: 339 of 360.</text>
+<circle cx="12" cy="64" r="4" fill="#4daf4a" fill-opacity="0.7"/>
+<text x="21" y="68" font-size="11" fill="#888888">vs r64 in memory</text>
+<circle cx="159" cy="64" r="4" fill="#377eb8" fill-opacity="0.7"/>
+<text x="168" y="68" font-size="11" fill="#888888">vs portable</text>
+<circle cx="271" cy="64" r="4" fill="#ff7f00" fill-opacity="0.7"/>
+<text x="280" y="68" font-size="11" fill="#888888">vs frozen</text>
+<path d="M 369 59 l 5 5 l -5 5 l -5 -5 z" fill="#888888"/>
+<text x="379" y="68" font-size="11" fill="#888888">geomean of the row</text>
+<line x1="272.1" y1="104" x2="272.1" y2="707" stroke="#888888" stroke-opacity="0.25" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="272.1" y="723" font-size="11" fill="#888888" text-anchor="middle">0.33x</text>
+<line x1="316.4" y1="104" x2="316.4" y2="707" stroke="#888888" stroke-opacity="0.25" stroke-width="1"/>
+<text x="316.4" y="723" font-size="11" fill="#888888" text-anchor="middle">0.5x</text>
+<line x1="390.1" y1="104" x2="390.1" y2="707" stroke="#888888" stroke-opacity="0.85" stroke-width="1.4"/>
+<text x="390.1" y="723" font-size="11" fill="#888888" text-anchor="middle">1x</text>
+<line x1="506.6" y1="104" x2="506.6" y2="707" stroke="#888888" stroke-opacity="0.25" stroke-width="1"/>
+<text x="506.6" y="723" font-size="11" fill="#888888" text-anchor="middle">2x</text>
+<line x1="623.1" y1="104" x2="623.1" y2="707" stroke="#888888" stroke-opacity="0.25" stroke-width="1"/>
+<text x="623.1" y="723" font-size="11" fill="#888888" text-anchor="middle">10x</text>
+<line x1="681.3" y1="104" x2="681.3" y2="707" stroke="#888888" stroke-opacity="0.25" stroke-width="1"/>
+<text x="681.3" y="723" font-size="11" fill="#888888" text-anchor="middle">100x</text>
+<line x1="739.5" y1="104" x2="739.5" y2="707" stroke="#888888" stroke-opacity="0.25" stroke-width="1"/>
+<text x="739.5" y="723" font-size="11" fill="#888888" text-anchor="middle">1kx</text>
+<line x1="768.6" y1="104" x2="768.6" y2="707" stroke="#888888" stroke-opacity="0.25" stroke-width="1"/>
+<line x1="797.8" y1="104" x2="797.8" y2="707" stroke="#888888" stroke-opacity="0.25" stroke-width="1"/>
+<text x="797.8" y="723" font-size="11" fill="#888888" text-anchor="middle">100kx</text>
+<line x1="826.9" y1="104" x2="826.9" y2="707" stroke="#888888" stroke-opacity="0.25" stroke-width="1"/>
+<line x1="856.0" y1="104" x2="856.0" y2="707" stroke="#888888" stroke-opacity="0.25" stroke-width="1"/>
+<text x="856.0" y="723" font-size="11" fill="#888888" text-anchor="middle">10Mx</text>
+<text x="8" y="117" font-size="12" font-weight="bold" fill="#888888">realdata -- bitmaps already in memory</text>
+<text x="252" y="139.5" font-size="10.5" fill="#888888" text-anchor="end">SuccessiveIntersection64</text>
+<circle cx="382.7" cy="135.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 SuccessiveIntersection64 vs r64 in memory: 0.93x</title></circle>
+<circle cx="465.8" cy="135.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census-income SuccessiveIntersection64 vs r64 in memory: 1.57x</title></circle>
+<circle cx="451.3" cy="135.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>oltp SuccessiveIntersection64 vs r64 in memory: 1.44x</title></circle>
+<circle cx="476.1" cy="135.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>weather_sept_85 SuccessiveIntersection64 vs r64 in memory: 1.67x</title></circle>
+<path d="M 442.9 130.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>SuccessiveIntersection64 geomean: 1.37x</title></path>
+<text x="252" y="158.5" font-size="10.5" fill="#888888" text-anchor="end">SuccessiveIntersectionCardinality64</text>
+<circle cx="418.4" cy="154.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 SuccessiveIntersectionCardinality64 vs r64 in memory: 1.18x</title></circle>
+<circle cx="452.7" cy="154.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census-income SuccessiveIntersectionCardinality64 vs r64 in memory: 1.45x</title></circle>
+<circle cx="412.1" cy="154.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>oltp SuccessiveIntersectionCardinality64 vs r64 in memory: 1.14x</title></circle>
+<circle cx="441.0" cy="154.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>weather_sept_85 SuccessiveIntersectionCardinality64 vs r64 in memory: 1.35x</title></circle>
+<path d="M 431.1 149.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>SuccessiveIntersectionCardinality64 geomean: 1.28x</title></path>
+<text x="252" y="177.5" font-size="10.5" fill="#888888" text-anchor="end">SuccessiveUnionCardinality64</text>
+<circle cx="543.8" cy="173.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 SuccessiveUnionCardinality64 vs r64 in memory: 3.35x</title></circle>
+<circle cx="459.8" cy="173.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census-income SuccessiveUnionCardinality64 vs r64 in memory: 1.51x</title></circle>
+<circle cx="435.9" cy="173.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>oltp SuccessiveUnionCardinality64 vs r64 in memory: 1.31x</title></circle>
+<circle cx="447.1" cy="173.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>weather_sept_85 SuccessiveUnionCardinality64 vs r64 in memory: 1.40x</title></circle>
+<path d="M 484.0 168.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>SuccessiveUnionCardinality64 geomean: 1.75x</title></path>
+<text x="252" y="196.5" font-size="10.5" fill="#888888" text-anchor="end">SuccessiveDifferenceCardinality64</text>
+<circle cx="521.0" cy="192.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 SuccessiveDifferenceCardinality64 vs r64 in memory: 2.44x</title></circle>
+<circle cx="456.5" cy="192.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census-income SuccessiveDifferenceCardinality64 vs r64 in memory: 1.48x</title></circle>
+<circle cx="424.1" cy="192.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>oltp SuccessiveDifferenceCardinality64 vs r64 in memory: 1.22x</title></circle>
+<circle cx="444.0" cy="192.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>weather_sept_85 SuccessiveDifferenceCardinality64 vs r64 in memory: 1.38x</title></circle>
+<path d="M 466.1 187.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>SuccessiveDifferenceCardinality64 geomean: 1.57x</title></path>
+<text x="252" y="215.5" font-size="10.5" fill="#888888" text-anchor="end">SuccessiveUnion64</text>
+<circle cx="446.9" cy="211.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 SuccessiveUnion64 vs r64 in memory: 1.40x</title></circle>
+<circle cx="381.3" cy="211.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census-income SuccessiveUnion64 vs r64 in memory: 0.92x</title></circle>
+<circle cx="379.4" cy="211.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>oltp SuccessiveUnion64 vs r64 in memory: 0.90x</title></circle>
+<circle cx="397.0" cy="211.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>weather_sept_85 SuccessiveUnion64 vs r64 in memory: 1.04x</title></circle>
+<path d="M 398.4 206.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>SuccessiveUnion64 geomean: 1.05x</title></path>
+<text x="252" y="234.5" font-size="10.5" fill="#888888" text-anchor="end">RandomAccess64</text>
+<circle cx="460.0" cy="230.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 RandomAccess64 vs r64 in memory: 1.52x</title></circle>
+<circle cx="520.3" cy="230.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census-income RandomAccess64 vs r64 in memory: 2.42x</title></circle>
+<circle cx="452.9" cy="230.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>oltp RandomAccess64 vs r64 in memory: 1.45x</title></circle>
+<circle cx="510.6" cy="230.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>weather_sept_85 RandomAccess64 vs r64 in memory: 2.11x</title></circle>
+<path d="M 491.8 225.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>RandomAccess64 geomean: 1.83x</title></path>
+<text x="252" y="253.5" font-size="10.5" fill="#888888" text-anchor="end">ToArray64</text>
+<circle cx="428.0" cy="249.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ToArray64 vs r64 in memory: 1.25x</title></circle>
+<circle cx="394.0" cy="249.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census-income ToArray64 vs r64 in memory: 1.02x</title></circle>
+<circle cx="374.7" cy="249.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>oltp ToArray64 vs r64 in memory: 0.86x</title></circle>
+<circle cx="380.1" cy="249.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>weather_sept_85 ToArray64 vs r64 in memory: 0.91x</title></circle>
+<path d="M 390.5 244.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>ToArray64 geomean: 1.00x</title></path>
+<text x="252" y="272.5" font-size="10.5" fill="#888888" text-anchor="end">IterateAll64</text>
+<circle cx="639.4" cy="268.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 IterateAll64 vs r64 in memory: 19.11x</title></circle>
+<circle cx="624.4" cy="268.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census-income IterateAll64 vs r64 in memory: 10.54x</title></circle>
+<circle cx="591.9" cy="268.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>oltp IterateAll64 vs r64 in memory: 6.50x</title></circle>
+<circle cx="611.0" cy="268.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>weather_sept_85 IterateAll64 vs r64 in memory: 8.47x</title></circle>
+<path d="M 623.7 263.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>IterateAll64 geomean: 10.26x</title></path>
+<text x="252" y="291.5" font-size="10.5" fill="#888888" text-anchor="end">ComputeCardinality64</text>
+<circle cx="630.5" cy="287.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ComputeCardinality64 vs r64 in memory: 13.41x</title></circle>
+<circle cx="628.8" cy="287.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census-income ComputeCardinality64 vs r64 in memory: 12.57x</title></circle>
+<circle cx="628.1" cy="287.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>oltp ComputeCardinality64 vs r64 in memory: 12.21x</title></circle>
+<circle cx="628.7" cy="287.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>weather_sept_85 ComputeCardinality64 vs r64 in memory: 12.48x</title></circle>
+<path d="M 629.0 282.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>ComputeCardinality64 geomean: 12.66x</title></path>
+<text x="8" y="318" font-size="12" font-weight="bold" fill="#888888">cold -- opened inside the timed call</text>
+<text x="252" y="340.5" font-size="10.5" fill="#888888" text-anchor="end">ColdSuccessiveIntersection64</text>
+<circle cx="624.3" cy="336.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 ColdSuccessiveIntersection64 vs portable: 10.52x</title></circle>
+<circle cx="528.7" cy="336.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 ColdSuccessiveIntersection64 vs frozen: 2.71x</title></circle>
+<circle cx="514.1" cy="336.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census-income ColdSuccessiveIntersection64 vs portable: 2.22x</title></circle>
+<circle cx="474.2" cy="336.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census-income ColdSuccessiveIntersection64 vs frozen: 1.65x</title></circle>
+<circle cx="521.3" cy="336.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>oltp ColdSuccessiveIntersection64 vs portable: 2.45x</title></circle>
+<circle cx="491.0" cy="336.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>oltp ColdSuccessiveIntersection64 vs frozen: 1.82x</title></circle>
+<circle cx="516.9" cy="336.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>weather_sept_85 ColdSuccessiveIntersection64 vs portable: 2.31x</title></circle>
+<circle cx="479.8" cy="336.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>weather_sept_85 ColdSuccessiveIntersection64 vs frozen: 1.71x</title></circle>
+<path d="M 524.4 331.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>ColdSuccessiveIntersection64 geomean: 2.56x</title></path>
+<text x="252" y="359.5" font-size="10.5" fill="#888888" text-anchor="end">ColdSuccessiveIntersectionCardinality64</text>
+<circle cx="639.3" cy="355.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 ColdSuccessiveIntersectionCardinality64 vs portable: 19.02x</title></circle>
+<circle cx="562.7" cy="355.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 ColdSuccessiveIntersectionCardinality64 vs frozen: 4.34x</title></circle>
+<circle cx="531.8" cy="355.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census-income ColdSuccessiveIntersectionCardinality64 vs portable: 2.83x</title></circle>
+<circle cx="467.9" cy="355.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census-income ColdSuccessiveIntersectionCardinality64 vs frozen: 1.59x</title></circle>
+<circle cx="513.7" cy="355.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>oltp ColdSuccessiveIntersectionCardinality64 vs portable: 2.21x</title></circle>
+<circle cx="464.0" cy="355.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>oltp ColdSuccessiveIntersectionCardinality64 vs frozen: 1.55x</title></circle>
+<circle cx="521.2" cy="355.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>weather_sept_85 ColdSuccessiveIntersectionCardinality64 vs portable: 2.45x</title></circle>
+<circle cx="458.3" cy="355.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>weather_sept_85 ColdSuccessiveIntersectionCardinality64 vs frozen: 1.50x</title></circle>
+<path d="M 532.9 350.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>ColdSuccessiveIntersectionCardinality64 geomean: 2.88x</title></path>
+<text x="252" y="378.5" font-size="10.5" fill="#888888" text-anchor="end">ColdSuccessiveUnionCardinality64</text>
+<circle cx="639.9" cy="374.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 ColdSuccessiveUnionCardinality64 vs portable: 19.48x</title></circle>
+<circle cx="583.9" cy="374.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 ColdSuccessiveUnionCardinality64 vs frozen: 5.82x</title></circle>
+<circle cx="533.6" cy="374.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census-income ColdSuccessiveUnionCardinality64 vs portable: 2.91x</title></circle>
+<circle cx="474.7" cy="374.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census-income ColdSuccessiveUnionCardinality64 vs frozen: 1.65x</title></circle>
+<circle cx="518.7" cy="374.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>oltp ColdSuccessiveUnionCardinality64 vs portable: 2.36x</title></circle>
+<circle cx="480.5" cy="374.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>oltp ColdSuccessiveUnionCardinality64 vs frozen: 1.71x</title></circle>
+<circle cx="522.7" cy="374.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>weather_sept_85 ColdSuccessiveUnionCardinality64 vs portable: 2.50x</title></circle>
+<circle cx="458.4" cy="374.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>weather_sept_85 ColdSuccessiveUnionCardinality64 vs frozen: 1.50x</title></circle>
+<path d="M 538.0 369.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>ColdSuccessiveUnionCardinality64 geomean: 3.09x</title></path>
+<text x="252" y="397.5" font-size="10.5" fill="#888888" text-anchor="end">ColdSuccessiveDifferenceCardinality64</text>
+<circle cx="639.8" cy="393.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 ColdSuccessiveDifferenceCardinality64 vs portable: 19.36x</title></circle>
+<circle cx="575.8" cy="393.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 ColdSuccessiveDifferenceCardinality64 vs frozen: 5.21x</title></circle>
+<circle cx="532.3" cy="393.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census-income ColdSuccessiveDifferenceCardinality64 vs portable: 2.86x</title></circle>
+<circle cx="471.4" cy="393.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census-income ColdSuccessiveDifferenceCardinality64 vs frozen: 1.62x</title></circle>
+<circle cx="515.8" cy="393.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>oltp ColdSuccessiveDifferenceCardinality64 vs portable: 2.27x</title></circle>
+<circle cx="472.3" cy="393.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>oltp ColdSuccessiveDifferenceCardinality64 vs frozen: 1.63x</title></circle>
+<circle cx="522.1" cy="393.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>weather_sept_85 ColdSuccessiveDifferenceCardinality64 vs portable: 2.48x</title></circle>
+<circle cx="455.8" cy="393.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>weather_sept_85 ColdSuccessiveDifferenceCardinality64 vs frozen: 1.48x</title></circle>
+<path d="M 535.6 388.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>ColdSuccessiveDifferenceCardinality64 geomean: 2.99x</title></path>
+<text x="252" y="416.5" font-size="10.5" fill="#888888" text-anchor="end">ColdSuccessiveUnion64</text>
+<circle cx="486.8" cy="412.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 ColdSuccessiveUnion64 vs portable: 1.78x</title></circle>
+<circle cx="438.8" cy="412.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 ColdSuccessiveUnion64 vs frozen: 1.34x</title></circle>
+<circle cx="424.6" cy="412.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census-income ColdSuccessiveUnion64 vs portable: 1.23x</title></circle>
+<circle cx="383.8" cy="412.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census-income ColdSuccessiveUnion64 vs frozen: 0.94x</title></circle>
+<circle cx="404.9" cy="412.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>oltp ColdSuccessiveUnion64 vs portable: 1.09x</title></circle>
+<circle cx="387.4" cy="412.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>oltp ColdSuccessiveUnion64 vs frozen: 0.97x</title></circle>
+<circle cx="438.1" cy="412.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>weather_sept_85 ColdSuccessiveUnion64 vs portable: 1.33x</title></circle>
+<circle cx="400.0" cy="412.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>weather_sept_85 ColdSuccessiveUnion64 vs frozen: 1.06x</title></circle>
+<path d="M 419.9 407.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>ColdSuccessiveUnion64 geomean: 1.19x</title></path>
+<text x="252" y="435.5" font-size="10.5" fill="#888888" text-anchor="end">ColdRandomAccess64</text>
+<circle cx="668.7" cy="431.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 ColdRandomAccess64 vs portable: 60.75x</title></circle>
+<circle cx="627.4" cy="431.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 ColdRandomAccess64 vs frozen: 11.88x</title></circle>
+<circle cx="664.2" cy="431.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census-income ColdRandomAccess64 vs portable: 50.93x</title></circle>
+<circle cx="588.8" cy="431.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census-income ColdRandomAccess64 vs frozen: 6.23x</title></circle>
+<circle cx="700.6" cy="431.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>oltp ColdRandomAccess64 vs portable: 214x</title></circle>
+<circle cx="677.0" cy="431.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>oltp ColdRandomAccess64 vs frozen: 84.42x</title></circle>
+<circle cx="685.4" cy="431.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>weather_sept_85 ColdRandomAccess64 vs portable: 118x</title></circle>
+<circle cx="627.3" cy="431.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>weather_sept_85 ColdRandomAccess64 vs frozen: 11.83x</title></circle>
+<path d="M 657.7 426.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>ColdRandomAccess64 geomean: 39.37x</title></path>
+<text x="252" y="454.5" font-size="10.5" fill="#888888" text-anchor="end">ColdToArray64</text>
+<circle cx="545.9" cy="450.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 ColdToArray64 vs portable: 3.44x</title></circle>
+<circle cx="480.9" cy="450.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 ColdToArray64 vs frozen: 1.72x</title></circle>
+<circle cx="412.4" cy="450.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census-income ColdToArray64 vs portable: 1.14x</title></circle>
+<circle cx="395.6" cy="450.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census-income ColdToArray64 vs frozen: 1.03x</title></circle>
+<circle cx="529.5" cy="450.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>oltp ColdToArray64 vs portable: 2.75x</title></circle>
+<circle cx="467.1" cy="450.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>oltp ColdToArray64 vs frozen: 1.58x</title></circle>
+<circle cx="404.5" cy="450.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>weather_sept_85 ColdToArray64 vs portable: 1.09x</title></circle>
+<circle cx="380.5" cy="450.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>weather_sept_85 ColdToArray64 vs frozen: 0.91x</title></circle>
+<path d="M 461.6 445.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>ColdToArray64 geomean: 1.53x</title></path>
+<text x="252" y="473.5" font-size="10.5" fill="#888888" text-anchor="end">ColdIterateAll64</text>
+<circle cx="637.3" cy="469.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 ColdIterateAll64 vs portable: 17.55x</title></circle>
+<circle cx="636.1" cy="469.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 ColdIterateAll64 vs frozen: 16.73x</title></circle>
+<circle cx="624.7" cy="469.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census-income ColdIterateAll64 vs portable: 10.66x</title></circle>
+<circle cx="624.4" cy="469.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census-income ColdIterateAll64 vs frozen: 10.55x</title></circle>
+<circle cx="604.6" cy="469.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>oltp ColdIterateAll64 vs portable: 7.75x</title></circle>
+<circle cx="595.2" cy="469.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>oltp ColdIterateAll64 vs frozen: 6.80x</title></circle>
+<circle cx="612.6" cy="469.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>weather_sept_85 ColdIterateAll64 vs portable: 8.66x</title></circle>
+<circle cx="611.2" cy="469.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>weather_sept_85 ColdIterateAll64 vs frozen: 8.48x</title></circle>
+<path d="M 623.8 464.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>ColdIterateAll64 geomean: 10.31x</title></path>
+<text x="252" y="492.5" font-size="10.5" fill="#888888" text-anchor="end">ColdComputeCardinality64</text>
+<circle cx="682.0" cy="488.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 ColdComputeCardinality64 vs portable: 103x</title></circle>
+<circle cx="644.2" cy="488.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 ColdComputeCardinality64 vs frozen: 23.04x</title></circle>
+<circle cx="692.8" cy="488.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census-income ColdComputeCardinality64 vs portable: 158x</title></circle>
+<circle cx="637.3" cy="488.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census-income ColdComputeCardinality64 vs frozen: 17.57x</title></circle>
+<circle cx="685.7" cy="488.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>oltp ColdComputeCardinality64 vs portable: 119x</title></circle>
+<circle cx="664.6" cy="488.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>oltp ColdComputeCardinality64 vs frozen: 51.77x</title></circle>
+<circle cx="707.9" cy="488.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>weather_sept_85 ColdComputeCardinality64 vs portable: 286x</title></circle>
+<circle cx="651.1" cy="488.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>weather_sept_85 ColdComputeCardinality64 vs frozen: 30.32x</title></circle>
+<path d="M 670.7 483.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>ColdComputeCardinality64 geomean: 65.80x</title></path>
+<text x="252" y="511.5" font-size="10.5" fill="#888888" text-anchor="end">MixedOLTP</text>
+<circle cx="501.4" cy="507.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 MixedOLTP vs portable: 1.94x</title></circle>
+<circle cx="516.4" cy="507.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 MixedOLTP vs frozen: 2.29x</title></circle>
+<circle cx="523.0" cy="507.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census-income MixedOLTP vs portable: 2.51x</title></circle>
+<circle cx="441.5" cy="507.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census-income MixedOLTP vs frozen: 1.36x</title></circle>
+<circle cx="511.4" cy="507.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>oltp MixedOLTP vs portable: 2.14x</title></circle>
+<circle cx="531.1" cy="507.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>oltp MixedOLTP vs frozen: 2.81x</title></circle>
+<circle cx="567.6" cy="507.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>weather_sept_85 MixedOLTP vs portable: 4.65x</title></circle>
+<circle cx="499.1" cy="507.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>weather_sept_85 MixedOLTP vs frozen: 1.91x</title></circle>
+<path d="M 517.0 502.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>MixedOLTP geomean: 2.31x</title></path>
+<text x="8" y="538" font-size="12" font-weight="bold" fill="#888888">synthetic -- generated shapes</text>
+<text x="252" y="560.5" font-size="10.5" fill="#888888" text-anchor="end">ContainsHit</text>
+<circle cx="441.6" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/1000/1 vs r64 in memory: 1.36x</title></circle>
+<circle cx="462.6" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/1000/2^8 vs r64 in memory: 1.54x</title></circle>
+<circle cx="531.1" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/1000/2^16 vs r64 in memory: 2.81x</title></circle>
+<circle cx="536.4" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/1000/2^24 vs r64 in memory: 3.02x</title></circle>
+<circle cx="537.7" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/1000/2^32 vs r64 in memory: 3.07x</title></circle>
+<circle cx="536.7" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/1000/2^40 vs r64 in memory: 3.03x</title></circle>
+<circle cx="533.5" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/1000/2^48 vs r64 in memory: 2.90x</title></circle>
+<circle cx="495.4" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/10000/1 vs r64 in memory: 1.87x</title></circle>
+<circle cx="473.7" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/10000/2^8 vs r64 in memory: 1.64x</title></circle>
+<circle cx="538.0" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/10000/2^16 vs r64 in memory: 3.09x</title></circle>
+<circle cx="545.5" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/10000/2^24 vs r64 in memory: 3.43x</title></circle>
+<circle cx="547.8" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/10000/2^32 vs r64 in memory: 3.53x</title></circle>
+<circle cx="547.5" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/10000/2^40 vs r64 in memory: 3.52x</title></circle>
+<circle cx="542.7" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/10000/2^48 vs r64 in memory: 3.30x</title></circle>
+<circle cx="532.7" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/100000/1 vs r64 in memory: 2.87x</title></circle>
+<circle cx="500.6" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/100000/2^8 vs r64 in memory: 1.93x</title></circle>
+<circle cx="545.9" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/100000/2^16 vs r64 in memory: 3.44x</title></circle>
+<circle cx="556.7" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/100000/2^24 vs r64 in memory: 4.00x</title></circle>
+<circle cx="555.9" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/100000/2^32 vs r64 in memory: 3.95x</title></circle>
+<circle cx="553.6" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/100000/2^40 vs r64 in memory: 3.83x</title></circle>
+<circle cx="538.7" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/100000/2^48 vs r64 in memory: 3.12x</title></circle>
+<circle cx="560.5" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/1000000/1 vs r64 in memory: 4.21x</title></circle>
+<circle cx="513.5" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/1000000/2^8 vs r64 in memory: 2.20x</title></circle>
+<circle cx="558.3" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/1000000/2^16 vs r64 in memory: 4.09x</title></circle>
+<circle cx="567.5" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/1000000/2^24 vs r64 in memory: 4.64x</title></circle>
+<circle cx="565.6" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/1000000/2^32 vs r64 in memory: 4.52x</title></circle>
+<circle cx="564.4" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/1000000/2^40 vs r64 in memory: 4.44x</title></circle>
+<circle cx="539.3" cy="556.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsHit/1000000/2^48 vs r64 in memory: 3.14x</title></circle>
+<path d="M 536.2 551.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>ContainsHit geomean: 3.01x</title></path>
+<text x="252" y="579.5" font-size="10.5" fill="#888888" text-anchor="end">ContainsMiss</text>
+<circle cx="433.4" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/1000/1 vs r64 in memory: 1.29x</title></circle>
+<circle cx="460.7" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/1000/2^8 vs r64 in memory: 1.52x</title></circle>
+<circle cx="527.5" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/1000/2^16 vs r64 in memory: 2.67x</title></circle>
+<circle cx="542.6" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/1000/2^24 vs r64 in memory: 3.29x</title></circle>
+<circle cx="538.4" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/1000/2^32 vs r64 in memory: 3.10x</title></circle>
+<circle cx="536.6" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/1000/2^40 vs r64 in memory: 3.03x</title></circle>
+<circle cx="528.6" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/1000/2^48 vs r64 in memory: 2.71x</title></circle>
+<circle cx="483.9" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/10000/1 vs r64 in memory: 1.75x</title></circle>
+<circle cx="472.6" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/10000/2^8 vs r64 in memory: 1.63x</title></circle>
+<circle cx="534.1" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/10000/2^16 vs r64 in memory: 2.93x</title></circle>
+<circle cx="548.0" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/10000/2^24 vs r64 in memory: 3.55x</title></circle>
+<circle cx="547.6" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/10000/2^32 vs r64 in memory: 3.53x</title></circle>
+<circle cx="545.4" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/10000/2^40 vs r64 in memory: 3.42x</title></circle>
+<circle cx="536.5" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/10000/2^48 vs r64 in memory: 3.03x</title></circle>
+<circle cx="528.7" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/100000/1 vs r64 in memory: 2.71x</title></circle>
+<circle cx="496.0" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/100000/2^8 vs r64 in memory: 1.88x</title></circle>
+<circle cx="541.1" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/100000/2^16 vs r64 in memory: 3.22x</title></circle>
+<circle cx="561.2" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/100000/2^24 vs r64 in memory: 4.25x</title></circle>
+<circle cx="554.1" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/100000/2^32 vs r64 in memory: 3.86x</title></circle>
+<circle cx="551.8" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/100000/2^40 vs r64 in memory: 3.74x</title></circle>
+<circle cx="531.8" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/100000/2^48 vs r64 in memory: 2.83x</title></circle>
+<circle cx="555.1" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/1000000/1 vs r64 in memory: 3.91x</title></circle>
+<circle cx="512.1" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/1000000/2^8 vs r64 in memory: 2.16x</title></circle>
+<circle cx="554.1" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/1000000/2^16 vs r64 in memory: 3.86x</title></circle>
+<circle cx="572.8" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/1000000/2^24 vs r64 in memory: 4.99x</title></circle>
+<circle cx="569.8" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/1000000/2^32 vs r64 in memory: 4.79x</title></circle>
+<circle cx="566.2" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/1000000/2^40 vs r64 in memory: 4.56x</title></circle>
+<circle cx="532.1" cy="575.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsMiss/1000000/2^48 vs r64 in memory: 2.85x</title></circle>
+<path d="M 534.6 570.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>ContainsMiss geomean: 2.95x</title></path>
+<text x="252" y="598.5" font-size="10.5" fill="#888888" text-anchor="end">Insert</text>
+<circle cx="388.5" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/1000/1 vs r64 in memory: 0.98x</title></circle>
+<circle cx="441.1" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/1000/2^8 vs r64 in memory: 1.35x</title></circle>
+<circle cx="561.4" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/1000/2^16 vs r64 in memory: 4.26x</title></circle>
+<circle cx="558.8" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/1000/2^24 vs r64 in memory: 4.12x</title></circle>
+<circle cx="559.8" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/1000/2^32 vs r64 in memory: 4.17x</title></circle>
+<circle cx="559.5" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/1000/2^40 vs r64 in memory: 4.15x</title></circle>
+<circle cx="559.1" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/1000/2^48 vs r64 in memory: 4.13x</title></circle>
+<circle cx="475.4" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/10000/1 vs r64 in memory: 1.66x</title></circle>
+<circle cx="455.8" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/10000/2^8 vs r64 in memory: 1.48x</title></circle>
+<circle cx="553.4" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/10000/2^16 vs r64 in memory: 3.82x</title></circle>
+<circle cx="554.7" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/10000/2^24 vs r64 in memory: 3.89x</title></circle>
+<circle cx="551.8" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/10000/2^32 vs r64 in memory: 3.74x</title></circle>
+<circle cx="552.8" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/10000/2^40 vs r64 in memory: 3.79x</title></circle>
+<circle cx="562.1" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/10000/2^48 vs r64 in memory: 4.31x</title></circle>
+<circle cx="485.6" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/100000/1 vs r64 in memory: 1.76x</title></circle>
+<circle cx="475.6" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/100000/2^8 vs r64 in memory: 1.66x</title></circle>
+<circle cx="511.3" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/100000/2^16 vs r64 in memory: 2.14x</title></circle>
+<circle cx="522.3" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/100000/2^24 vs r64 in memory: 2.49x</title></circle>
+<circle cx="518.4" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/100000/2^32 vs r64 in memory: 2.35x</title></circle>
+<circle cx="518.7" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/100000/2^40 vs r64 in memory: 2.37x</title></circle>
+<circle cx="523.1" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/100000/2^48 vs r64 in memory: 2.51x</title></circle>
+<circle cx="533.2" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/1000000/1 vs r64 in memory: 2.89x</title></circle>
+<circle cx="480.6" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/1000000/2^8 vs r64 in memory: 1.71x</title></circle>
+<circle cx="366.7" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/1000000/2^16 vs r64 in memory: 0.80x</title></circle>
+<circle cx="367.3" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/1000000/2^24 vs r64 in memory: 0.81x</title></circle>
+<circle cx="366.4" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/1000000/2^32 vs r64 in memory: 0.80x</title></circle>
+<circle cx="366.6" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/1000000/2^40 vs r64 in memory: 0.80x</title></circle>
+<circle cx="530.8" cy="594.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Insert/1000000/2^48 vs r64 in memory: 2.80x</title></circle>
+<path d="M 514.0 589.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>Insert geomean: 2.21x</title></path>
+<text x="252" y="617.5" font-size="10.5" fill="#888888" text-anchor="end">Remove</text>
+<circle cx="482.6" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/1000/1 vs r64 in memory: 1.73x</title></circle>
+<circle cx="497.6" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/1000/2^8 vs r64 in memory: 1.90x</title></circle>
+<circle cx="618.2" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/1000/2^16 vs r64 in memory: 9.35x</title></circle>
+<circle cx="621.1" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/1000/2^24 vs r64 in memory: 9.73x</title></circle>
+<circle cx="620.7" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/1000/2^32 vs r64 in memory: 9.68x</title></circle>
+<circle cx="620.4" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/1000/2^40 vs r64 in memory: 9.64x</title></circle>
+<circle cx="618.4" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/1000/2^48 vs r64 in memory: 9.37x</title></circle>
+<circle cx="624.0" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/10000/1 vs r64 in memory: 10.36x</title></circle>
+<circle cx="505.3" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/10000/2^8 vs r64 in memory: 1.98x</title></circle>
+<circle cx="623.5" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/10000/2^16 vs r64 in memory: 10.16x</title></circle>
+<circle cx="625.4" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/10000/2^24 vs r64 in memory: 10.98x</title></circle>
+<circle cx="625.3" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/10000/2^32 vs r64 in memory: 10.91x</title></circle>
+<circle cx="625.1" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/10000/2^40 vs r64 in memory: 10.83x</title></circle>
+<circle cx="624.3" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/10000/2^48 vs r64 in memory: 10.50x</title></circle>
+<circle cx="571.5" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/100000/1 vs r64 in memory: 4.90x</title></circle>
+<circle cx="508.6" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/100000/2^8 vs r64 in memory: 2.06x</title></circle>
+<circle cx="625.8" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/100000/2^16 vs r64 in memory: 11.15x</title></circle>
+<circle cx="627.1" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/100000/2^24 vs r64 in memory: 11.74x</title></circle>
+<circle cx="627.2" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/100000/2^32 vs r64 in memory: 11.78x</title></circle>
+<circle cx="626.9" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/100000/2^40 vs r64 in memory: 11.63x</title></circle>
+<circle cx="601.1" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/100000/2^48 vs r64 in memory: 7.39x</title></circle>
+<circle cx="566.7" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/1000000/1 vs r64 in memory: 4.59x</title></circle>
+<circle cx="512.8" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/1000000/2^8 vs r64 in memory: 2.18x</title></circle>
+<circle cx="625.5" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/1000000/2^16 vs r64 in memory: 11.01x</title></circle>
+<circle cx="627.0" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/1000000/2^24 vs r64 in memory: 11.71x</title></circle>
+<circle cx="626.3" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/1000000/2^32 vs r64 in memory: 11.35x</title></circle>
+<circle cx="626.3" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/1000000/2^40 vs r64 in memory: 11.37x</title></circle>
+<circle cx="487.0" cy="613.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 Remove/1000000/2^48 vs r64 in memory: 1.78x</title></circle>
+<path d="M 596.1 608.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>Remove geomean: 6.89x</title></path>
+<text x="252" y="636.5" font-size="10.5" fill="#888888" text-anchor="end">ContainsRandom</text>
+<circle cx="435.5" cy="632.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsRandom/0 vs r64 in memory: 1.31x</title></circle>
+<circle cx="421.9" cy="632.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsRandom/1 vs r64 in memory: 1.21x</title></circle>
+<circle cx="421.6" cy="632.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsRandom/2 vs r64 in memory: 1.21x</title></circle>
+<circle cx="422.7" cy="632.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsRandom/3 vs r64 in memory: 1.21x</title></circle>
+<circle cx="380.7" cy="632.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsRandom/4 vs r64 in memory: 0.92x</title></circle>
+<circle cx="463.1" cy="632.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsRandom/5 vs r64 in memory: 1.54x</title></circle>
+<circle cx="450.2" cy="632.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsRandom/6 vs r64 in memory: 1.43x</title></circle>
+<circle cx="423.2" cy="632.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsRandom/7 vs r64 in memory: 1.22x</title></circle>
+<circle cx="493.6" cy="632.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsRandom/8 vs r64 in memory: 1.85x</title></circle>
+<circle cx="448.7" cy="632.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 ContainsRandom/9 vs r64 in memory: 1.42x</title></circle>
+<path d="M 435.6 627.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>ContainsRandom geomean: 1.31x</title></path>
+<text x="252" y="655.5" font-size="10.5" fill="#888888" text-anchor="end">InsertRemoveRandom</text>
+<circle cx="446.7" cy="651.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 InsertRemoveRandom/0 vs r64 in memory: 1.40x</title></circle>
+<circle cx="289.9" cy="651.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 InsertRemoveRandom/1 vs r64 in memory: 0.39x</title></circle>
+<circle cx="274.2" cy="651.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 InsertRemoveRandom/2 vs r64 in memory: 0.34x</title></circle>
+<circle cx="284.8" cy="651.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 InsertRemoveRandom/3 vs r64 in memory: 0.37x</title></circle>
+<circle cx="385.2" cy="651.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 InsertRemoveRandom/4 vs r64 in memory: 0.95x</title></circle>
+<circle cx="291.8" cy="651.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 InsertRemoveRandom/5 vs r64 in memory: 0.40x</title></circle>
+<circle cx="271.6" cy="651.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 InsertRemoveRandom/6 vs r64 in memory: 0.33x</title></circle>
+<circle cx="420.5" cy="651.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 InsertRemoveRandom/7 vs r64 in memory: 1.20x</title></circle>
+<circle cx="293.3" cy="651.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 InsertRemoveRandom/8 vs r64 in memory: 0.40x</title></circle>
+<circle cx="448.9" cy="651.5" r="3.5" fill="#4daf4a" fill-opacity="0.55"><title>census1881 InsertRemoveRandom/9 vs r64 in memory: 1.42x</title></circle>
+<path d="M 335.4 646.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>InsertRemoveRandom geomean: 0.60x</title></path>
+<text x="252" y="674.5" font-size="10.5" fill="#888888" text-anchor="end">Serialize</text>
+<circle cx="522.6" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/1000/1 vs portable: 2.49x</title></circle>
+<circle cx="516.7" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/1000/1 vs frozen: 2.30x</title></circle>
+<circle cx="558.4" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/1000/2^8 vs portable: 4.09x</title></circle>
+<circle cx="542.0" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/1000/2^8 vs frozen: 3.26x</title></circle>
+<circle cx="666.2" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/1000/2^16 vs portable: 54.98x</title></circle>
+<circle cx="659.8" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/1000/2^16 vs frozen: 42.67x</title></circle>
+<circle cx="666.1" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/1000/2^24 vs portable: 54.75x</title></circle>
+<circle cx="656.7" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/1000/2^24 vs frozen: 37.88x</title></circle>
+<circle cx="683.0" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/1000/2^32 vs portable: 107x</title></circle>
+<circle cx="657.3" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/1000/2^32 vs frozen: 38.69x</title></circle>
+<circle cx="682.4" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/1000/2^40 vs portable: 104x</title></circle>
+<circle cx="656.3" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/1000/2^40 vs frozen: 37.29x</title></circle>
+<circle cx="682.5" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/1000/2^48 vs portable: 105x</title></circle>
+<circle cx="656.8" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/1000/2^48 vs frozen: 37.96x</title></circle>
+<circle cx="479.7" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/10000/1 vs portable: 1.70x</title></circle>
+<circle cx="452.3" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/10000/1 vs frozen: 1.45x</title></circle>
+<circle cx="577.2" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/10000/2^8 vs portable: 5.31x</title></circle>
+<circle cx="561.7" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/10000/2^8 vs frozen: 4.28x</title></circle>
+<circle cx="662.4" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/10000/2^16 vs portable: 47.28x</title></circle>
+<circle cx="653.1" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/10000/2^16 vs frozen: 32.85x</title></circle>
+<circle cx="662.6" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/10000/2^24 vs portable: 47.81x</title></circle>
+<circle cx="653.7" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/10000/2^24 vs frozen: 33.55x</title></circle>
+<circle cx="678.9" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/10000/2^32 vs portable: 91.13x</title></circle>
+<circle cx="653.2" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/10000/2^32 vs frozen: 32.89x</title></circle>
+<circle cx="678.6" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/10000/2^40 vs portable: 89.77x</title></circle>
+<circle cx="652.9" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/10000/2^40 vs frozen: 32.57x</title></circle>
+<circle cx="680.0" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/10000/2^48 vs portable: 95.04x</title></circle>
+<circle cx="656.1" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/10000/2^48 vs frozen: 36.98x</title></circle>
+<circle cx="507.8" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/100000/1 vs portable: 2.03x</title></circle>
+<circle cx="467.1" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/100000/1 vs frozen: 1.58x</title></circle>
+<circle cx="563.0" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/100000/2^8 vs portable: 4.36x</title></circle>
+<circle cx="547.4" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/100000/2^8 vs frozen: 3.52x</title></circle>
+<circle cx="661.1" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/100000/2^16 vs portable: 45.01x</title></circle>
+<circle cx="652.5" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/100000/2^16 vs frozen: 31.99x</title></circle>
+<circle cx="660.7" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/100000/2^24 vs portable: 44.32x</title></circle>
+<circle cx="651.7" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/100000/2^24 vs frozen: 30.99x</title></circle>
+<circle cx="677.5" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/100000/2^32 vs portable: 86.08x</title></circle>
+<circle cx="652.1" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/100000/2^32 vs frozen: 31.53x</title></circle>
+<circle cx="678.4" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/100000/2^40 vs portable: 89.35x</title></circle>
+<circle cx="653.0" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/100000/2^40 vs frozen: 32.65x</title></circle>
+<circle cx="677.3" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/100000/2^48 vs portable: 85.55x</title></circle>
+<circle cx="652.8" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/100000/2^48 vs frozen: 32.35x</title></circle>
+<circle cx="413.6" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/1000000/1 vs portable: 1.15x</title></circle>
+<circle cx="405.7" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/1000000/1 vs frozen: 1.10x</title></circle>
+<circle cx="553.7" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/1000000/2^8 vs portable: 3.84x</title></circle>
+<circle cx="537.7" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/1000000/2^8 vs frozen: 3.07x</title></circle>
+<circle cx="631.0" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/1000000/2^16 vs portable: 13.68x</title></circle>
+<circle cx="622.5" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/1000000/2^16 vs frozen: 9.93x</title></circle>
+<circle cx="630.5" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/1000000/2^24 vs portable: 13.44x</title></circle>
+<circle cx="621.8" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/1000000/2^24 vs frozen: 9.83x</title></circle>
+<circle cx="647.6" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/1000000/2^32 vs portable: 26.34x</title></circle>
+<circle cx="624.8" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/1000000/2^32 vs frozen: 10.70x</title></circle>
+<circle cx="647.7" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/1000000/2^40 vs portable: 26.48x</title></circle>
+<circle cx="624.5" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/1000000/2^40 vs frozen: 10.61x</title></circle>
+<circle cx="677.5" cy="670.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Serialize/1000000/2^48 vs portable: 86.13x</title></circle>
+<circle cx="653.7" cy="670.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Serialize/1000000/2^48 vs frozen: 33.56x</title></circle>
+<path d="M 637.8 665.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>Serialize geomean: 17.88x</title></path>
+<text x="252" y="693.5" font-size="10.5" fill="#888888" text-anchor="end">Deserialize</text>
+<circle cx="592.0" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/1000/1 vs portable: 6.51x</title></circle>
+<circle cx="520.7" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/1000/1 vs frozen: 2.43x</title></circle>
+<circle cx="631.2" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/1000/2^8 vs portable: 13.79x</title></circle>
+<circle cx="580.2" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/1000/2^8 vs frozen: 5.53x</title></circle>
+<circle cx="753.2" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/1000/2^16 vs portable: 2,941x</title></circle>
+<circle cx="744.8" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/1000/2^16 vs frozen: 1,523x</title></circle>
+<circle cx="753.4" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/1000/2^24 vs portable: 2,994x</title></circle>
+<circle cx="744.8" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/1000/2^24 vs frozen: 1,520x</title></circle>
+<circle cx="756.8" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/1000/2^32 vs portable: 3,905x</title></circle>
+<circle cx="744.7" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/1000/2^32 vs frozen: 1,504x</title></circle>
+<circle cx="756.8" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/1000/2^40 vs portable: 3,906x</title></circle>
+<circle cx="744.8" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/1000/2^40 vs frozen: 1,522x</title></circle>
+<circle cx="756.7" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/1000/2^48 vs portable: 3,901x</title></circle>
+<circle cx="744.7" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/1000/2^48 vs frozen: 1,505x</title></circle>
+<circle cx="663.2" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/10000/1 vs portable: 48.86x</title></circle>
+<circle cx="520.8" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/10000/1 vs frozen: 2.43x</title></circle>
+<circle cx="688.0" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/10000/2^8 vs portable: 131x</title></circle>
+<circle cx="662.6" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/10000/2^8 vs frozen: 47.66x</title></circle>
+<circle cx="782.6" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/10000/2^16 vs portable: 30,167x</title></circle>
+<circle cx="773.4" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/10000/2^16 vs frozen: 14,536x</title></circle>
+<circle cx="783.0" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/10000/2^24 vs portable: 31,120x</title></circle>
+<circle cx="773.2" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/10000/2^24 vs frozen: 14,343x</title></circle>
+<circle cx="785.9" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/10000/2^32 vs portable: 39,228x</title></circle>
+<circle cx="773.3" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/10000/2^32 vs frozen: 14,421x</title></circle>
+<circle cx="785.9" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/10000/2^40 vs portable: 39,124x</title></circle>
+<circle cx="773.2" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/10000/2^40 vs frozen: 14,307x</title></circle>
+<circle cx="785.9" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/10000/2^48 vs portable: 38,986x</title></circle>
+<circle cx="773.3" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/10000/2^48 vs frozen: 14,485x</title></circle>
+<circle cx="680.9" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/100000/1 vs portable: 98.47x</title></circle>
+<circle cx="551.2" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/100000/1 vs frozen: 3.71x</title></circle>
+<circle cx="743.1" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/100000/2^8 vs portable: 1,326x</title></circle>
+<circle cx="727.4" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/100000/2^8 vs frozen: 620x</title></circle>
+<circle cx="811.7" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/100000/2^16 vs portable: 300,788x</title></circle>
+<circle cx="802.2" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/100000/2^16 vs frozen: 142,235x</title></circle>
+<circle cx="811.8" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/100000/2^24 vs portable: 304,376x</title></circle>
+<circle cx="802.0" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/100000/2^24 vs frozen: 139,324x</title></circle>
+<circle cx="815.0" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/100000/2^32 vs portable: 389,468x</title></circle>
+<circle cx="802.0" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/100000/2^32 vs frozen: 140,280x</title></circle>
+<circle cx="814.9" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/100000/2^40 vs portable: 387,070x</title></circle>
+<circle cx="802.0" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/100000/2^40 vs frozen: 139,270x</title></circle>
+<circle cx="809.3" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/100000/2^48 vs portable: 248,220x</title></circle>
+<circle cx="796.9" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/100000/2^48 vs frozen: 93,586x</title></circle>
+<circle cx="733.1" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/1000000/1 vs portable: 777x</title></circle>
+<circle cx="637.6" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/1000000/1 vs frozen: 17.78x</title></circle>
+<circle cx="772.3" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/1000000/2^8 vs portable: 13,370x</title></circle>
+<circle cx="763.1" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/1000000/2^8 vs frozen: 6,453x</title></circle>
+<circle cx="842.7" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/1000000/2^16 vs portable: 3,505,719x</title></circle>
+<circle cx="831.8" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/1000000/2^16 vs frozen: 1,480,049x</title></circle>
+<circle cx="842.8" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/1000000/2^24 vs portable: 3,519,835x</title></circle>
+<circle cx="831.8" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/1000000/2^24 vs frozen: 1,478,171x</title></circle>
+<circle cx="845.4" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/1000000/2^32 vs portable: 4,313,980x</title></circle>
+<circle cx="832.1" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/1000000/2^32 vs frozen: 1,505,678x</title></circle>
+<circle cx="845.3" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/1000000/2^40 vs portable: 4,286,429x</title></circle>
+<circle cx="831.8" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/1000000/2^40 vs frozen: 1,473,182x</title></circle>
+<circle cx="809.2" cy="689.5" r="3.5" fill="#377eb8" fill-opacity="0.55"><title>census1881 Deserialize/1000000/2^48 vs portable: 247,795x</title></circle>
+<circle cx="797.0" cy="689.5" r="3.5" fill="#ff7f00" fill-opacity="0.55"><title>census1881 Deserialize/1000000/2^48 vs frozen: 93,850x</title></circle>
+<path d="M 767.2 684.5 l 5 5 l -5 5 l -5 -5 z" fill="#888888"><title>Deserialize geomean: 8,903x</title></path>
+</svg>

@@ -93,4 +93,5 @@ for set in $sets; do
 done
 
 python3 "$here/report.py" "$prefix"-*.tsv > "$prefix-report.md"
+python3 "$here/plot.py" "$prefix"-*.tsv -o "$prefix-plot.svg"
 echo "wrote $prefix-report.md"
