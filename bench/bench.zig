@@ -634,7 +634,7 @@ fn serializeR64Frozen(ds: *DataSet) u64 {
 /// for: `fromBuffer` is a pointer cast, so the marker keeps it from folding
 /// away entirely.
 fn deserializeZroar(ds: *DataSet) u64 {
-    var bm = zroar.Bitmap.fromBuffer(ds.allocator, ds.synth.zr_buf.?) catch unreachable;
+    var bm = zroar.Bitmap.fromBuffer(ds.allocator, ds.synth.zr_buf.?, .borrow) catch unreachable;
     std.mem.doNotOptimizeAway(bm.data.ptr);
     bm.deinit();
     return 1;
@@ -738,7 +738,7 @@ fn coldZroar(comptime op: ZOp) Func {
     return struct {
         fn f(ds: *DataSet) u64 {
             for (ds.zr_open, ds.zr_bufs) |*slot, buf| {
-                slot.* = zroar.Bitmap.fromBuffer(ds.allocator, buf) catch unreachable;
+                slot.* = zroar.Bitmap.fromBuffer(ds.allocator, buf, .borrow) catch unreachable;
             }
             const marker = op(ds, ds.zr_open);
             for (ds.zr_open) |*bm| bm.deinit();

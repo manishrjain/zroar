@@ -241,7 +241,7 @@ pub const Synth = struct {
         const want = self.zr.?.getCardinality();
         if (self.r64.?.cardinality() != want) return error.R64Differs;
 
-        var zr = try zroar.Bitmap.fromBuffer(self.allocator, self.zr_buf.?);
+        var zr = try zroar.Bitmap.fromBuffer(self.allocator, self.zr_buf.?, .borrow);
         defer zr.deinit();
         if (zr.getCardinality() != want) return error.ZroarBufferDiffers;
 
@@ -404,7 +404,7 @@ pub fn checkFiles(ds: *const DataSet) void {
         defer frozen.free();
         expectR64(ds, frozen, want, i, "frozen");
 
-        var reopened = zroar.Bitmap.fromBuffer(ds.allocator, ds.zr_bufs[i]) catch unreachable;
+        var reopened = zroar.Bitmap.fromBuffer(ds.allocator, ds.zr_bufs[i], .borrow) catch unreachable;
         defer reopened.deinit();
         const got = reopened.toArray(ds.allocator) catch @panic("out of memory");
         defer ds.allocator.free(got);

@@ -657,28 +657,51 @@ pub const Bitmap = struct {
         return out;
     }
 
-    /// Wraps `buf` in O(1) without copying or validating it. The bitmap may
-    /// be mutated: the first mutation copies the buffer out (`ensureOwned`),
-    /// so `buf` itself is never written to. Reads are free of any copy. `buf`
-    /// must outlive the bitmap. Returns a fresh empty bitmap if `buf` is too
-    /// small or oddly sized to be a bitmap at all.
-    pub fn fromBuffer(allocator: std.mem.Allocator, buf: AlignedU8) !Bitmap {
-        if (buf.len % 2 != 0 or buf.len < min_buffer_bytes)
+    /// Who is responsible for the buffer handed to `fromBuffer`.
+    pub const Ownership = enum {
+        /// The caller keeps the buffer: it is never written to or freed, and
+        /// must outlive the bitmap. The first mutation copies it out
+        /// (`ensureOwned`).
+        borrow,
+        /// The bitmap takes the buffer: mutations work on it directly, growth
+        /// remaps it, `deinit` frees it. It must be an entire allocation made
+        /// by the same allocator.
+        own,
+    };
+
+    /// Wraps `buf` in O(1) without copying or validating it beyond the
+    /// version. Reads are free of any copy either way; `ownership` says what
+    /// mutation and deinit may do to `buf` — see `Ownership`. Passing `.own`
+    /// transfers unconditionally: whatever this returns, including both
+    /// cases below, the caller no longer frees `buf`.
+    ///
+    /// Returns a fresh empty bitmap if `buf` is too small or oddly sized to
+    /// be a bitmap at all.
+    pub fn fromBuffer(
+        allocator: std.mem.Allocator,
+        buf: AlignedU8,
+        ownership: Ownership,
+    ) !Bitmap {
+        if (buf.len % 2 != 0 or buf.len < min_buffer_bytes) {
+            if (ownership == .own) allocator.free(buf);
             return init(allocator);
+        }
 
         // A version this build does not know means the layout may differ;
         // misreading it silently would be far worse than refusing. (Unlike
         // the size checks above, which mean "not a bitmap at all" and get an
         // empty one, this is a bitmap — just not ours to read.)
         const words: [*]const u64 = @ptrCast(@alignCast(buf.ptr));
-        if (keys_mod.versionOf(words[0]) != format_version)
+        if (keys_mod.versionOf(words[0]) != format_version) {
+            if (ownership == .own) allocator.free(buf);
             return error.UnsupportedFormatVersion;
+        }
 
         const p: [*]align(8) u16 = @ptrCast(buf.ptr);
         return .{
             .data = p[0 .. buf.len / 2],
             .cap = buf.len / 2,
-            .owned = false,
+            .owned = ownership == .own,
             .allocator = allocator,
         };
     }
@@ -693,21 +716,15 @@ pub const Bitmap = struct {
             return init(allocator);
 
         const out = try allocator.alignedAlloc(u8, .@"8", buf.len);
-        errdefer allocator.free(out);
         @memcpy(out, buf);
-
-        var bm = try fromBuffer(allocator, out);
-        bm.owned = true; // we allocated `out`, so the bitmap must free it
-        return bm;
+        // No errdefer: `.own` means fromBuffer frees `out` on its error path.
+        return fromBuffer(allocator, out, .own);
     }
 
     /// An independent, owned copy of this bitmap.
     pub fn clone(self: *const Bitmap) !Bitmap {
         const buf = try self.toBufferCopy(self.allocator);
-        errdefer self.allocator.free(buf);
-        var bm = try fromBuffer(self.allocator, buf);
-        bm.owned = true; // we allocated buf, so the clone must free it
-        return bm;
+        return fromBuffer(self.allocator, buf, .own);
     }
 
     // -----------------------------------------------------------------------

@@ -216,7 +216,7 @@ fn runOpStream(seed: u64, dist: Distribution, ops: usize) !void {
             // Reopen borrowing the buffer, then keep mutating it: the first
             // mutation must copy out and leave `buf` alone.
             const buf = try bm.toBufferCopy(testing.allocator);
-            const reopened = try Bitmap.fromBuffer(testing.allocator, buf);
+            const reopened = try Bitmap.fromBuffer(testing.allocator, buf, .borrow);
             bm.deinit();
             bm = reopened;
             borrowed[if (cp == 3) 0 else 1] = buf;
@@ -457,7 +457,7 @@ fn checkRoundTrip(ref: *const RefSet, bm: *const Bitmap) !void {
     const buf = try bm.toBufferCopy(testing.allocator);
     defer testing.allocator.free(buf);
 
-    var borrowed = try Bitmap.fromBuffer(testing.allocator, buf);
+    var borrowed = try Bitmap.fromBuffer(testing.allocator, buf, .borrow);
     defer borrowed.deinit();
     try testing.expectEqualSlices(u16, bm.data, borrowed.data);
     try expectMatches(ref, &borrowed);
@@ -538,7 +538,7 @@ test "a bitmap reopened from a buffer keeps growing correctly" {
         try expectMatches(&ref, &bm);
 
         const buf = try bm.toBufferCopy(testing.allocator);
-        const reopened = try Bitmap.fromBuffer(testing.allocator, buf);
+        const reopened = try Bitmap.fromBuffer(testing.allocator, buf, .borrow);
         bm.deinit();
         bm = reopened;
         slot.* = buf;

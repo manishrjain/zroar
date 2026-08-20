@@ -411,7 +411,7 @@ test "relocation keeps dead space under the cleanup bound" {
     // A buffer serialized with dead slots still in it reopens correctly.
     const buf = try bm.toBufferCopy(testing.allocator);
     defer testing.allocator.free(buf);
-    var re = try Bitmap.fromBuffer(testing.allocator, buf);
+    var re = try Bitmap.fromBuffer(testing.allocator, buf, .borrow);
     defer re.deinit();
     try testing.expectEqual(@as(u64, 6000), re.getCardinality());
     try checkInvariants(&re);
@@ -443,7 +443,7 @@ test "container relocation on a borrowed bitmap copies out" {
     const buf = try src.toBufferCopy(testing.allocator);
     defer testing.allocator.free(buf);
 
-    var view = try Bitmap.fromBuffer(testing.allocator, buf);
+    var view = try Bitmap.fromBuffer(testing.allocator, buf, .borrow);
     defer view.deinit();
     try testing.expect(!view.owned);
 
@@ -685,7 +685,7 @@ test "compact round trips through a buffer" {
 
     const buf = try bm.toBufferCopy(testing.allocator);
     defer testing.allocator.free(buf);
-    var reopened = try Bitmap.fromBuffer(testing.allocator, buf);
+    var reopened = try Bitmap.fromBuffer(testing.allocator, buf, .borrow);
     defer reopened.deinit();
     try testing.expectEqual(card, reopened.getCardinality());
 
@@ -735,7 +735,7 @@ test "round trip through a buffer is bit identical" {
     const buf = try bm.toBufferCopy(testing.allocator);
     defer testing.allocator.free(buf);
 
-    var reopened = try Bitmap.fromBuffer(testing.allocator, buf);
+    var reopened = try Bitmap.fromBuffer(testing.allocator, buf, .borrow);
     defer reopened.deinit();
 
     try testing.expectEqualSlices(u16, bm.data, reopened.data);
@@ -759,7 +759,7 @@ test "empty bitmap round trip" {
     defer testing.allocator.free(buf);
     try testing.expect(buf.len > 0); // no null special case
 
-    var reopened = try Bitmap.fromBuffer(testing.allocator, buf);
+    var reopened = try Bitmap.fromBuffer(testing.allocator, buf, .borrow);
     defer reopened.deinit();
     try testing.expect(reopened.isEmpty());
     try testing.expectEqual(@as(u64, 0), reopened.getCardinality());
@@ -777,11 +777,11 @@ test "fromBuffer rejects buffers too small to be a bitmap" {
     var short: [min_buffer_bytes - 2]u8 align(8) =
         .{0} ** (min_buffer_bytes - 2);
 
-    var a = try Bitmap.fromBuffer(testing.allocator, &odd);
+    var a = try Bitmap.fromBuffer(testing.allocator, &odd, .borrow);
     defer a.deinit();
     try testing.expect(a.owned and a.isEmpty());
 
-    var b = try Bitmap.fromBuffer(testing.allocator, &short);
+    var b = try Bitmap.fromBuffer(testing.allocator, &short, .borrow);
     defer b.deinit();
     try testing.expect(b.owned and b.isEmpty());
 
@@ -805,7 +805,7 @@ test "mutating a borrowed bitmap copies out, even without growth" {
         // Key 0's array container has a free slot, so this set would fit in
         // place — the copy must happen anyway, because a mutation may never
         // write to the caller's buffer.
-        var view = try Bitmap.fromBuffer(testing.allocator, buf);
+        var view = try Bitmap.fromBuffer(testing.allocator, buf, .borrow);
         defer view.deinit();
         try testing.expect(try view.set(3));
         try testing.expect(view.owned);
@@ -815,7 +815,7 @@ test "mutating a borrowed bitmap copies out, even without growth" {
 
     // The caller's buffer still reads back as the original two values.
     try testing.expectEqualSlices(u8, pristine, buf);
-    var again = try Bitmap.fromBuffer(testing.allocator, buf);
+    var again = try Bitmap.fromBuffer(testing.allocator, buf, .borrow);
     defer again.deinit();
     try testing.expect(!again.contains(3));
     try testing.expectEqual(@as(u64, 2), again.getCardinality());
@@ -829,7 +829,7 @@ test "reads on a borrowed bitmap never copy" {
     const buf = try src.toBufferCopy(testing.allocator);
     defer testing.allocator.free(buf);
 
-    var view = try Bitmap.fromBuffer(testing.allocator, buf);
+    var view = try Bitmap.fromBuffer(testing.allocator, buf, .borrow);
     defer view.deinit();
     for (0..100) |i| try testing.expect(view.contains(i * 7));
     try testing.expectEqual(@as(u64, 100), view.getCardinality());
@@ -846,7 +846,7 @@ test "ensureOwned unlocks the infallible mutators on a borrowed bitmap" {
     const pristine = try testing.allocator.dupe(u8, buf);
     defer testing.allocator.free(pristine);
 
-    var view = try Bitmap.fromBuffer(testing.allocator, buf);
+    var view = try Bitmap.fromBuffer(testing.allocator, buf, .borrow);
     defer view.deinit();
     try view.ensureOwned();
     try testing.expect(view.remove(3));
@@ -866,7 +866,7 @@ test "growing a borrowed bitmap copies out and leaves the buffer untouched" {
     const pristine = try testing.allocator.dupe(u8, buf);
     defer testing.allocator.free(pristine);
 
-    var view = try Bitmap.fromBuffer(testing.allocator, buf);
+    var view = try Bitmap.fromBuffer(testing.allocator, buf, .borrow);
     defer view.deinit();
     try testing.expect(!view.owned);
 
@@ -883,7 +883,7 @@ test "growing a borrowed bitmap copies out and leaves the buffer untouched" {
     try checkInvariants(&view);
 
     // The untouched buffer still reads back as the original bitmap.
-    var reread = try Bitmap.fromBuffer(testing.allocator, buf);
+    var reread = try Bitmap.fromBuffer(testing.allocator, buf, .borrow);
     defer reread.deinit();
     try testing.expectEqual(@as(u64, 2), reread.getCardinality());
     try testing.expect(!reread.contains(1 << 48));
@@ -897,7 +897,7 @@ test "a grown borrowed bitmap keeps growing correctly" {
     const buf = try src.toBufferCopy(testing.allocator);
     defer testing.allocator.free(buf);
 
-    var view = try Bitmap.fromBuffer(testing.allocator, buf);
+    var view = try Bitmap.fromBuffer(testing.allocator, buf, .borrow);
     defer view.deinit();
 
     // Enough work to force many reallocations and a container conversion.
@@ -1244,7 +1244,7 @@ test "And result round trips through a buffer bit identically" {
 
     const buf = try got.toBufferCopy(testing.allocator);
     defer testing.allocator.free(buf);
-    var reopened = try Bitmap.fromBuffer(testing.allocator, buf);
+    var reopened = try Bitmap.fromBuffer(testing.allocator, buf, .borrow);
     defer reopened.deinit();
 
     try testing.expectEqualSlices(u16, got.data, reopened.data);
@@ -1783,7 +1783,7 @@ test "fromSortedList matches a set loop and round trips" {
 
     const buf = try built.toBufferCopy(testing.allocator);
     defer testing.allocator.free(buf);
-    var reopened = try Bitmap.fromBuffer(testing.allocator, buf);
+    var reopened = try Bitmap.fromBuffer(testing.allocator, buf, .borrow);
     defer reopened.deinit();
     try testing.expectEqualSlices(u16, built.data, reopened.data);
     try expectSameAs(&ref, &reopened);
@@ -1845,7 +1845,7 @@ test "cleanup compacts the buffer and keeps key 0" {
     // The compacted buffer is still a valid serialized bitmap.
     const buf = try bm.toBufferCopy(testing.allocator);
     defer testing.allocator.free(buf);
-    var reopened = try Bitmap.fromBuffer(testing.allocator, buf);
+    var reopened = try Bitmap.fromBuffer(testing.allocator, buf, .borrow);
     defer reopened.deinit();
     try testing.expectEqual(@as(u64, 3), reopened.getCardinality());
     try checkInvariants(&reopened);
@@ -2052,7 +2052,7 @@ test "the format version is the buffer's first two bytes and is enforced" {
     try testing.expectEqual(@as(u8, zroar.format_version), buf[0]);
     try testing.expectEqual(@as(u8, 0), buf[1]);
 
-    var reopened = try Bitmap.fromBuffer(testing.allocator, buf);
+    var reopened = try Bitmap.fromBuffer(testing.allocator, buf, .borrow);
     defer reopened.deinit();
     try testing.expect(reopened.contains(1 << 40));
 
@@ -2061,7 +2061,7 @@ test "the format version is the buffer's first two bytes and is enforced" {
     buf[0] = zroar.format_version + 1;
     try testing.expectError(
         error.UnsupportedFormatVersion,
-        Bitmap.fromBuffer(testing.allocator, buf),
+        Bitmap.fromBuffer(testing.allocator, buf, .borrow),
     );
     try testing.expectError(
         error.UnsupportedFormatVersion,
@@ -2070,12 +2070,43 @@ test "the format version is the buffer's first two bytes and is enforced" {
     buf[0] = 0;
     try testing.expectError(
         error.UnsupportedFormatVersion,
-        Bitmap.fromBuffer(testing.allocator, buf),
+        Bitmap.fromBuffer(testing.allocator, buf, .borrow),
     );
 
     // Restored, it opens again.
     buf[0] = zroar.format_version;
-    var again = try Bitmap.fromBuffer(testing.allocator, buf);
+    var again = try Bitmap.fromBuffer(testing.allocator, buf, .borrow);
     defer again.deinit();
     try testing.expectEqual(@as(u64, 3), again.getCardinality());
+}
+
+test "fromBuffer with .own transfers the buffer, even on failure" {
+    // Success: the bitmap frees the buffer in deinit, and a mutation works
+    // on it directly instead of copying out. testing.allocator's leak check
+    // is what verifies every free in this test.
+    var bm = try testBitmap(&.{ 1, 99, 1 << 40 });
+    defer bm.deinit();
+    var owned = try Bitmap.fromBuffer(
+        testing.allocator,
+        try bm.toBufferCopy(testing.allocator),
+        .own,
+    );
+    defer owned.deinit();
+    try testing.expect(owned.contains(1 << 40));
+    try testing.expect(try owned.set(7));
+    try testing.expectEqual(@as(u64, 4), owned.getCardinality());
+
+    // Version mismatch: the error path must free an owned buffer too.
+    const bad = try bm.toBufferCopy(testing.allocator);
+    bad[0] = zroar.format_version + 1;
+    try testing.expectError(
+        error.UnsupportedFormatVersion,
+        Bitmap.fromBuffer(testing.allocator, bad, .own),
+    );
+
+    // Not-a-bitmap sizes: the empty-bitmap path frees an owned buffer too.
+    const tiny = try testing.allocator.alignedAlloc(u8, .@"8", 8);
+    var empty = try Bitmap.fromBuffer(testing.allocator, tiny, .own);
+    defer empty.deinit();
+    try testing.expect(empty.isEmpty());
 }

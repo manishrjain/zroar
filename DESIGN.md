@@ -207,11 +207,15 @@ Conversion thresholds:
   Valid until the bitmap grows or is deinited. Empty bitmap returns its
   (minimal, valid) buffer — no null special case.
 - `toBufferCopy(self, allocator) !AlignedU8` — owning copy.
-- `fromBuffer(allocator, buf: AlignedU8) Bitmap` — O(1) view: `buf.len % 2
-  == 0` and `buf.len >= minimal` required (else return a fresh empty
-  bitmap); `owned = false`; allocator retained for copy-on-grow. The
-  bitmap MAY be mutated; first growth copies out. Non-growing mutations
-  write through to the caller's buffer — documented.
+- `fromBuffer(allocator, buf: AlignedU8, .borrow | .own) !Bitmap` — O(1),
+  no copy: `buf.len % 2 == 0` and `buf.len >= minimal` required (else a
+  fresh empty bitmap); an unknown version is refused
+  (`error.UnsupportedFormatVersion`). With `.borrow`, `buf` is never
+  written to or freed and must outlive the bitmap: every mutation begins
+  with `ensureOwned`, which copies the buffer out first. With `.own`, the
+  bitmap mutates, remaps and (in `deinit`) frees `buf` itself; the
+  transfer is unconditional — the empty-bitmap and error returns free an
+  owned `buf` too.
 - `fromBufferCopy(allocator, buf: []const u8) !Bitmap` — copy up front
   (also the path for unaligned input).
 - **Format is little-endian by definition** — not "native-endian". On
@@ -223,9 +227,10 @@ Conversion thresholds:
   if ever wanted, becomes an explicit swap-on-open in `fromBufferCopy`
   without changing the format.) A file written on any supported machine reads
   on every supported machine.
-- Format is unversioned and trusted. Buffers are validated only by debug
-  assertions; production callers own integrity (checksums live a layer above,
-  e.g. the storage engine).
+- Format is versioned (the first two bytes; see the keys-node section) and
+  otherwise trusted: beyond the version and size checks, buffers are
+  validated only by debug assertions; production callers own integrity
+  (checksums live a layer above, e.g. the storage engine).
 
 ## Public API (src/zroar.zig)
 

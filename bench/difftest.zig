@@ -255,7 +255,7 @@ fn runSortedPass(allocator: std.mem.Allocator, stats: *Stats, seed: u64) !void {
     {
         const zbuf = try z.toBufferCopy(allocator);
         defer allocator.free(zbuf);
-        var z2 = try Bitmap.fromBuffer(allocator, zbuf);
+        var z2 = try Bitmap.fromBuffer(allocator, zbuf, .borrow);
         defer z2.deinit();
 
         const rbuf = try allocator.alloc(u8, r.portableSizeInBytes());
@@ -415,7 +415,7 @@ fn runAlgebraPass(allocator: std.mem.Allocator, stats: *Stats, seed: u64) !void 
         try compareContents(allocator, &zu, ru, "compacted Or", seed, 0);
         const buf = try zu.toBufferCopy(allocator);
         defer allocator.free(buf);
-        var zre = try Bitmap.fromBuffer(allocator, buf);
+        var zre = try Bitmap.fromBuffer(allocator, buf, .borrow);
         defer zre.deinit();
         try compareContents(allocator, &zre, ru, "reopened Or", seed, 0);
         stats.content_checks += 4;

@@ -68,7 +68,7 @@ Geometric means of the ratios (CRoaring's time ÷ zroar's; above 1 = zroar faste
 | Deserialize | 16,358× (6.45×–4,412,064×) | 5,215× (2.51×–1,538,984×) | zroar 723 ns · portable 467.69 ms (646,753×) · frozen 180.21 ms (249,205×) |
 | ContainsRandom | 1.33× (0.93×–1.89×) | – | zroar 1.5 µs · r64 2.0 µs (1.39×) |
 | InsertRemoveRandom | 0.59× (0.33×–1.42×) | – | zroar 101.3 µs · r64 39.4 µs (0.39×) |
-| **across the operation families** (Serialize/Deserialize excluded, each family weighted equally) | **2.16×** | | |
+| **across the operation families** (Ser/Deserialize excluded) | **2.16×** | | |
 | **across all families** (each weighted equally) | **8.91×** | | |
 
 ## Data sets
