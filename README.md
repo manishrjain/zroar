@@ -32,12 +32,11 @@ C1, zoomed in:
   └───────┴───────┴─────────────┴───────────────────────────────┘
 ```
 
+zroar is available under the Apache v2.0 [License](LICENSE). Benchmark Report:
+[BENCHMARKS](BENCHMARKS.md). Layout: [DESIGN](DESIGN.md). zroar is inspired by
+my earlier work on [sroar](https://github.com/manishrjain/sroar), written in Go.
+
 ## Benchmarks Against CRoaring
-
-Every benchmark comparison, one dot each (click through for hover details
-naming each test):
-
-[![zroar vs CRoaring, one dot per benchmark comparison](static/bench-plot.svg)](static/bench-plot.svg)
 
 For benchmarks, we ported the
 [CRoaring](https://github.com/roaringBitmap/CRoaring) benchmark suite to Zig. We
@@ -72,24 +71,25 @@ parens; "total time" sums all rows per side, where the expensive rows dominate.
 | synthetic, all families | 188 | 8.92× (portable where a format is involved) | – |
 
 
-| set | table | typical row | total time |
-|---|---|---|---|
-| census1881 | realdata (in memory) | 2.64× (0.93×–19.11×) | zroar 1.02 ms · r64 6.94 ms (6.81×) |
-| census1881 | cold, opened portable | 12.57× (1.78×–103×) | zroar 2.03 ms · portable 11.55 ms (5.69×) |
-| census1881 | cold, opened frozen | 4.94× (1.34×–23.04×) | zroar 2.03 ms · frozen 9.49 ms (4.67×) |
-| census-income | realdata (in memory) | 2.26× (0.92×–12.57×) | zroar 12.16 ms · r64 57.61 ms (4.74×) |
-| census-income | cold, opened portable | 5.24× (1.14×–158×) | zroar 12.42 ms · portable 62.25 ms (5.01×) |
-| census-income | cold, opened frozen | 2.53× (0.94×–17.57×) | zroar 12.42 ms · frozen 58.42 ms (4.70×) |
-| weather_sept_85 | realdata (in memory) | 2.14× (0.91×–12.48×) | zroar 32.04 ms · r64 116.25 ms (3.63×) |
-| weather_sept_85 | cold, opened portable | 6.08× (1.09×–286×) | zroar 32.64 ms · portable 131.60 ms (4.03×) |
-| weather_sept_85 | cold, opened frozen | 2.82× (0.91×–30.32×) | zroar 32.64 ms · frozen 118.20 ms (3.62×) |
-| oltp | realdata (in memory) | 1.84× (0.86×–12.21×) | zroar 32.45 ms · r64 47.36 ms (1.46×) |
-| oltp | cold, opened portable | 5.71× (1.09×–214×) | zroar 34.00 ms · portable 79.65 ms (2.34×) |
-| oltp | cold, opened frozen | 3.99× (0.97×–84.42×) | zroar 34.00 ms · frozen 62.42 ms (1.84×) |
+| set | table | typical row | total time zroar | total time r64  |
+|---|---|---|---|---|
+| census1881 | realdata (in memory) | 2.64×  | 1.02 ms | 6.94 ms  |
+| census1881 | cold, opened portable | 12.57×  |  2.03 ms | 11.55 ms  |
+| census1881 | cold, opened frozen | 4.94×  |  2.03 ms | 9.49 ms  |
+| census-income | realdata (in memory) | 2.26×  |  12.16 ms | 57.61 ms  |
+| census-income | cold, opened portable | 5.24×  |  12.42 ms | 62.25 ms  |
+| census-income | cold, opened frozen | 2.53×  |  12.42 ms | 58.42 ms  |
+| weather_sept_85 | realdata (in memory) | 2.14×  |  32.04 ms | 116.25 ms  |
+| weather_sept_85 | cold, opened portable | 6.08×  |  32.64 ms | 131.60 ms  |
+| weather_sept_85 | cold, opened frozen | 2.82×  |  32.64 ms | 118.20 ms  |
+| oltp | realdata (in memory) | 1.84×  |  32.45 ms | 47.36 ms  |
+| oltp | cold, opened portable | 5.71×  |  34.00 ms | 79.65 ms  |
+| oltp | cold, opened frozen | 3.99×  |  34.00 ms | 62.42 ms  |
 
-zroar is available under the Apache v2.0 [License](LICENSE). Benchmark Report:
-[BENCHMARKS](BENCHMARKS.md). Layout: [DESIGN](DESIGN.md). zroar is inspired by
-my earlier work on [sroar](https://github.com/manishrjain/sroar), written in Go.
+Every benchmark comparison, one dot each (click through for hover details
+naming each test):
+
+[![zroar vs CRoaring, one dot per benchmark comparison](static/bench-plot.svg)](static/bench-plot.svg)
 
 ## Why zroar and Why Is It Faster?
 
