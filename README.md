@@ -15,21 +15,6 @@ zroar — one single buffer
   │        flat buffer        │
   │   in memory == on disk    │   fromBuffer(): pointer cast +
   └───────────────────────────┘                 version check, ~ns
-
-Flat buffer internal:
-  ┌───────────────────────────┬──────┬────────────┬──────┬─────┐
-  │  sorted (high48, offset)  │  C0  │     C1     │  C2  │ ... │
-  │  pairs (the keys node)    │      │            │      │     │
-  └─────────────┬─────────────┴──────┴────────────┴──────┴─────┘
-                │  binary search + scan               ▲
-                └────────── offset add ───────────────┘
-
-C1, zoomed in:
-  ┌───────┬───────┬─────────────┬───────────────────────────────┐
-  │ size  │ type  │ cardinality │ payload                       │
-  │ (u16) │ (u16) │    (u32)    │ array:  sorted low16 values   │
-  │       │       │             │ bitmap: 65,536 bits           │
-  └───────┴───────┴─────────────┴───────────────────────────────┘
 ```
 
 zroar is available under the Apache v2.0 [License](LICENSE). Benchmark Report:
@@ -59,8 +44,7 @@ were done with the latest version of CRoaring 5.0 (released Aug 2026), on a
 Ryzen 9 5950X with the benchmark process pinned to a core, fixed at 4.00 GHz.
 
 Every number below is CRoaring's time ÷ zroar's on the same benchmark — above
-1 means zroar is faster. "Typical row" is the geometric mean with min–max in
-parens; "total time" sums all rows per side, where the expensive rows dominate.
+1 means zroar is faster.
 
 | headline | # tests | vs CRoaring | vs frozen |
 |---|---|---|---|
@@ -70,21 +54,10 @@ parens; "total time" sums all rows per side, where the expensive rows dominate.
 | synthetic, Serialize + Deserialize | 56 | 615× (portable) | 259× |
 | synthetic, all families | 188 | 8.92× (portable where a format is involved) | – |
 
-
-| set | table | typical row | total time zroar | total time r64  |
-|---|---|---|---|---|
-| census1881 | realdata (in memory) | 2.64×  | 1.02 ms | 6.94 ms  |
-| census1881 | cold, opened portable | 12.57×  |  2.03 ms | 11.55 ms  |
-| census1881 | cold, opened frozen | 4.94×  |  2.03 ms | 9.49 ms  |
-| census-income | realdata (in memory) | 2.26×  |  12.16 ms | 57.61 ms  |
-| census-income | cold, opened portable | 5.24×  |  12.42 ms | 62.25 ms  |
-| census-income | cold, opened frozen | 2.53×  |  12.42 ms | 58.42 ms  |
-| weather_sept_85 | realdata (in memory) | 2.14×  |  32.04 ms | 116.25 ms  |
-| weather_sept_85 | cold, opened portable | 6.08×  |  32.64 ms | 131.60 ms  |
-| weather_sept_85 | cold, opened frozen | 2.82×  |  32.64 ms | 118.20 ms  |
-| oltp | realdata (in memory) | 1.84×  |  32.45 ms | 47.36 ms  |
-| oltp | cold, opened portable | 5.71×  |  34.00 ms | 79.65 ms  |
-| oltp | cold, opened frozen | 3.99×  |  34.00 ms | 62.42 ms  |
+By total wall-clock per data set (summing every row, where the expensive rows
+dominate as they would in a workload), zroar is 1.5x-6.8x faster warm and
+1.8x-5.7x on cold opens — see [BENCHMARKS](BENCHMARKS.md) for the per-dataset
+detail.
 
 Every benchmark comparison, one dot each (click through for hover details
 naming each test):
@@ -92,6 +65,22 @@ naming each test):
 [![zroar vs CRoaring, one dot per benchmark comparison](static/bench-plot.svg)](static/bench-plot.svg)
 
 ## Why zroar and Why Is It Faster?
+
+zroar was originally designed for systems which keep their posting lists /
+inverted indexes on disk, or have to send them over the network. The design goal
+for zroar is to ensure that the serialized form can readily do both read and
+write operations without any performance penalty of a deserialization step.
+
+However, zroar has proven to be more efficient than CRoaring even for warm,
+purely in-memory operations, with no deserialization step involved. I believe
+this design can be applied to a Roaring Bitmaps library in any language to
+achieve a significant performance boost (also proven by sroar in Go originally).
+
+Roaring bitmaps split each integer into two parts: the most significant 48 bits
+(high48) and the least significant 16 (low16). The high48 goes into an index,
+which points to a container; the container stores the low16 of every integer
+sharing that high48. Depending upon how many integers are present, the
+container could be a sorted 16-bit unsigned int array, or a 65,536-bit bitmap.
 
 ```
 CRoaring — reaching a container is a chain of dependent loads,
@@ -103,7 +92,17 @@ every box a separate heap allocation:
 
   each arrow is a load whose address comes out of the previous load:
   nothing to prefetch, and any arrow can be a cache miss.
+```
 
+CRoaring keeps the high48 index in an adaptive radix tree (ART), and allocates
+each container separately on the heap. Reaching a container means walking the
+ART — one byte of the high48 per level, typically 2–3 levels after path
+compression — and then following three more pointers: the ART leaf holds an
+index into a containers array, whose entry points to a container header, which
+points to the payload. That's five to six dependent memory loads, each waiting
+on the address from the previous one, and each a potential cache miss.
+
+```
 zroar — one buffer, offsets instead of pointers:
 
   ┌───────────────────────────┬──────┬────────────┬──────┬─────┐
@@ -126,31 +125,7 @@ zroar — one buffer, offsets instead of pointers:
   └───────┴───────┴─────────────┴───────────────────────────────┘
 ```
 
-zroar was originally designed for systems which keep their posting lists /
-inverted indexes on disk, or have to send them over the network. The design goal
-for zroar is to ensure that the serialized form can readily do both read and
-write operations without any performance penalty of a deserialization step.
-
-However, zroar has proven to be more efficient than CRoaring even for warm,
-purely in-memory operations, with no deserialization step involved. I believe
-this design can be applied to a Roaring Bitmaps library in any language to
-achieve a significant performance boost (also proven by sroar in Go originally).
-
-Roaring bitmaps split each integer into two parts: the most significant 48 bits
-(high48) and the least significant 16 (low16). The high48 goes into an index,
-which points to a container; the container stores the low16 of every integer
-sharing that high48. Depending upon how many integers are present, the
-container could be a sorted 16-bit unsigned int array, or a 65,536-bit bitmap.
-
-CRoaring keeps the high48 index in an adaptive radix tree (ART), and allocates
-each container separately on the heap. Reaching a container means walking the
-ART — one byte of the high48 per level, typically 2–3 levels after path
-compression — and then following three more pointers: the ART leaf holds an
-index into a containers array, whose entry points to a container header, which
-points to the payload. That's five to six dependent memory loads, each waiting
-on the address from the previous one, and each a potential cache miss.
-
-zroar flips that design by allocating one flat buffer for everything. The
+**zroar flips that design** by allocating one flat buffer for everything. The
 front of the buffer keeps sorted (high48, offset) pairs, where the offset says
 where in the same buffer the container lives. The container in turn starts
 with a small header: size of container (u16), type of container (array or
