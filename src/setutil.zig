@@ -117,7 +117,7 @@ const Block = @Vector(block_len, u16);
 /// identity plus seven — walk every lane of `vb` past every lane of `va`:
 /// all 64 pairs, none twice. Every rotation amount is comptime, so each is
 /// one fixed shuffle.
-fn matchAny(va: Block, vb: Block) u8 {
+fn matchingIndices(va: Block, vb: Block) u8 {
     var mask: u8 = @bitCast(va == vb);
     inline for (1..block_len) |r| {
         mask |= @as(u8, @bitCast(va == std.simd.rotateElementsLeft(vb, r)));
@@ -150,19 +150,19 @@ fn localIntersectCore(
     while (k1 + block_len <= set1.len and k2 + block_len <= set2.len) {
         const va: Block = set1[k1..][0..block_len].*;
         const vb: Block = set2[k2..][0..block_len].*;
-        var m = matchAny(va, vb);
+        var idxs = matchingIndices(va, vb);
         if (mode == .materialize) {
             // The set bits of `m`, lowest first, are the matching lanes of the
             // set1 block in ascending order; `m &= m - 1` clears the lowest.
             // Lane t is written at `pos <= k1 + t`, i.e. never past the element
             // it came from, which is what lets Container.andArray point `out`
             // at set1's own storage.
-            while (m != 0) : (m &= m - 1) {
-                out[pos] = set1[k1 + @ctz(m)];
+            while (idxs != 0) : (idxs &= idxs - 1) {
+                out[pos] = set1[k1 + @ctz(idxs)];
                 pos += 1;
             }
         } else {
-            pos += @popCount(m);
+            pos += @popCount(idxs);
         }
         const a_max = set1[k1 + block_len - 1];
         const b_max = set2[k2 + block_len - 1];

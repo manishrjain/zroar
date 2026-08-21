@@ -6,7 +6,9 @@ keeps all the MSB 48-bit keys (high48) and containers in a single flat byte
 buffer, so the **in-memory form of zroar is the serialized form,** which can then be
 stored to disk or sent over the network as is. When opening a zroar buffer,
 there's no parsing or per-container allocation. All read/write operations can be
-done on the buffer immediately.
+done on the buffer immediately. The hot paths are explicitly vectorized with
+SIMD using Zig's native support: container searches, set operations on
+both container types, and extracting values out into arrays.
 
 ```
 zroar — one single buffer
@@ -311,16 +313,21 @@ might exist in array containers (to support growth). In this form, zroar takes
 
 5. **Simpler, smaller codebase**
 
-The zroar codebase is also simple and much smaller. The main logic (excluding tests
-and benchmarking code) is ~2000 lines of code, compared to CRoaring's 17,000
-lines of code for the 64-bit version (excluding the 32-bit version, tests,
-bench). In CRoaring, just roaring64.c and art.c by themselves are >4K LOC.
+The zroar codebase is also simpler and much smaller. The main logic (excluding
+tests and benchmarking code) is ~2000 lines of code, compared to CRoaring's
+17,000 lines of code for the 64-bit version (excluding the 32-bit version,
+tests, bench). In CRoaring, just roaring64.c and art.c by themselves are >4K
+LOC.
 
 This is due to the simpler design of zroar: it avoids the need for a complex
 adaptive radix tree (ART) implementation, serialization / deserialization, and
 frozen views which accommodate the ART; it has two container types instead of
 three; and it writes each SIMD kernel once in portable Zig instead of per-ISA
 variants plus dispatch.
+
+In fact, one of the guiding principles of zroar is to weigh code complexity
+against functionality and performance, tilting heavily towards simpler
+code.
 
 ## zroar Downsides Compared to CRoaring
 
