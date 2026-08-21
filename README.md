@@ -117,6 +117,16 @@ zroar — one buffer, offsets instead of pointers:
   the search touches a few adjacent cache lines in one place;
   the "dereference" is an add into the same buffer.
 
+  the keys node starts with a 16-byte header — the version check at
+  open is a read of the buffer's first two bytes:
+
+       keys node, zoomed in
+  ┌─────────┬───────────┬──────────┬────────────────────────────┐
+  │ format  │ node size │ num keys │ sorted (high48, offset)    │
+  │ version │ (48 bits) │  (u64)   │ pairs — two u64s per key   │
+  │  (u16)  │           │          │                            │
+  └─────────┴───────────┴──────────┴────────────────────────────┘
+
   every container starts with an 8-byte header, payload right behind:
 
        C1, zoomed in
@@ -195,9 +205,19 @@ checkout. CRoaring elsewhere than /tmp/CRoaring: `-Dcroaring=<dir>`.
 
 ## Status
 
-Zig 0.16. Format version 1 (the buffer's first two bytes; other versions are
-refused). Buffers are trusted input — integrity checks belong a layer above.
-No run containers, no 32-bit variant.
+zroar is pre-1.0 and uses calendar versioning: `0.YYMM.patch`, so v0.2608.0
+begins the Aug 2026 series. The API may change between release series (patch
+releases excepted), so check the release notes. The format version (encoded
+in the buffer) is tracked separately from the release version: releases that
+share a format version read each other's buffers.
+
+|Release Version|Format Version|
+|---|---|
+| v0.2608.0 | 1 |
+
+Zig 0.16. The format version lives in the buffer's first two bytes; other
+versions are refused. Buffers are trusted input — integrity checks belong a
+layer above. No run containers, no 32-bit variant.
 
 ## zroar Design Advantages Over CRoaring
 
