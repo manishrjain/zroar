@@ -1,0 +1,77 @@
+# Runs on every commit: the unit tests in every optimize mode, and a
+# five-minute differential soak against CRoaring. The nightly hour-long soak
+# lives in nightly.yml.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+# A superseded pull request push is cancelled, since only its head matters.
+# A push to a branch is not, so every commit gets its own difftest.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: test (${{ matrix.optimize }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # `push` already covers every branch in this repo, so for those the
+    # `pull_request` event would only run the same commit twice. It is kept
+    # for pull requests from forks, where no push event reaches this repo.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    strategy:
+      # Which modes fail is the useful signal, so a red one does not cancel
+      # the others.
+      fail-fast: false
+      matrix:
+        # Debug and ReleaseSafe keep the safety checks; ReleaseFast drops
+        # them and turns the optimizer up, which is where a miscompile or
+        # latent UB shows itself and a Debug-only run would not.
+        optimize: [Debug, ReleaseSafe, ReleaseFast]
+    steps:
+      - uses: actions/checkout@v4
+
+      # With no `version`, the action installs the `minimum_zig_version` from
+      # build.zig.zon, so CI follows that field rather than a second copy of
+      # the number. It also caches the Zig cache directory between runs;
+      # `cache-key` keeps each matrix leg in its own cache.
+      - uses: mlugg/setup-zig@v2
+        with:
+          cache-key: test-${{ matrix.optimize }}
+
+      - run: zig build test -Doptimize=${{ matrix.optimize }}
+
+  difftest:
+    name: difftest (5m soak)
+    runs-on: ubuntu-latest
+    # The soak itself is 5 minutes; the rest is the CRoaring build, which is
+    # cached after the first run.
+    timeout-minutes: 20
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          cache-key: difftest
+
+      # fetch_croaring.sh pins the CRoaring tag, so the script's own hash is
+      # the cache key: bumping the tag there fetches the new one. The script
+      # leaves an already-present checkout alone, so a cache hit skips the
+      # clone entirely.
+      - uses: actions/cache@v4
+        with:
+          path: /tmp/CRoaring
+          key: croaring-${{ hashFiles('bench/fetch_croaring.sh') }}
+
+      - run: bench/fetch_croaring.sh
+
+      # A fresh base seed per run, so consecutive commits do not re-walk the
+      # same streams. A failure prints the round seed to replay it with.
+      - run: zig build difftest -- --soak 300 --progress 60 --seed ${{ github.run_id }}

@@ -1,0 +1,55 @@
+# The long differential soak: an hour of zroar against CRoaring every night,
+# on top of the five minutes CI runs per commit (ci.yml).
+name: Nightly difftest
+
+on:
+  schedule:
+    # Fields are: minute hour day-of-month month day-of-week. So this is
+    # 09:17 UTC daily, which is 02:17 US/Pacific in summer and 01:17 in
+    # winter. GitHub only understands UTC, so the local hour shifts by one
+    # across daylight saving. The odd minute is deliberate: runs scheduled on
+    # the hour queue behind everyone else's and start late.
+    #
+    # Scheduled runs only ever use the default branch.
+    - cron: "17 9 * * *"
+  # So a failing night can be replayed on demand with its own seed.
+  workflow_dispatch:
+    inputs:
+      soak_seconds:
+        description: Soak duration in seconds
+        required: false
+        default: "3600"
+      seed:
+        description: Base seed to replay (defaults to the run id)
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  difftest:
+    name: difftest (1h soak)
+    runs-on: ubuntu-latest
+    # The soak is an hour; the rest is the CRoaring build and some headroom,
+    # since a round in flight when the time is up still runs to completion.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      # With no `version`, the action installs the `minimum_zig_version` from
+      # build.zig.zon, so CI follows that field rather than a second copy of
+      # the number. It also caches the Zig cache directory between runs.
+      - uses: mlugg/setup-zig@v2
+
+      # fetch_croaring.sh pins the CRoaring tag, so the script's own hash is
+      # the cache key. Shared with ci.yml, which usually populates it first.
+      - uses: actions/cache@v4
+        with:
+          path: /tmp/CRoaring
+          key: croaring-${{ hashFiles('bench/fetch_croaring.sh') }}
+
+      - run: bench/fetch_croaring.sh
+
+      # A fresh base seed per run, so each night covers new streams; a
+      # failure prints the round seed, which goes back in as `seed` above.
+      - run: zig build difftest -- --soak ${{ inputs.soak_seconds || 3600 }} --progress 300 --seed ${{ inputs.seed || github.run_id }}
