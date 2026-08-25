@@ -1,6 +1,6 @@
 .{
     .name = .zroar,
-    .version = "0.1.0",
+    .version = "0.2608.1",
     .fingerprint = 0x3510a18f25dc2445, // Changing this has security and trust implications.
     .minimum_zig_version = "0.16.0",
     .dependencies = .{},

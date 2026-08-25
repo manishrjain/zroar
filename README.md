@@ -214,6 +214,7 @@ share a format version read each other's buffers.
 |Release Version|Format Version|
 |---|---|
 | v0.2608.0 | 1 |
+| v0.2608.1 | 1 |
 
 Zig 0.16. The format version lives in the buffer's first two bytes; other
 versions are refused. Buffers are trusted input — integrity checks belong a
