@@ -275,9 +275,11 @@ everything else the headers bound — array slack, dead slots, spare key
 pairs, scoot holes — is dead bytes and is not zeroed. The working buffer is
 therefore NOT canonical: two equal sets need not match byte for byte, and
 bytes of removed values may linger in the slack. `compact()` is the
-canonicalizer — it rebuilds into a zeroed buffer, so equal sets compact to
-identical bytes, and it is the step before storing; serialize a
-non-compacted buffer only if its dead bytes are acceptable in the output.
+canonicalizer — it rebuilds into a zeroed buffer, or, when the buffer is
+already the size it would rebuild into, zeroes that slack where it lies — so
+equal sets compact to identical bytes, and it is the step before storing;
+serialize a non-compacted buffer only if its dead bytes are acceptable in the
+output.
 
 ## fastOr (the flagship bulk union — port with one simplification)
 

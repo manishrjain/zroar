@@ -159,11 +159,26 @@ test "the lookup hint never changes what is built" {
     try testing.expectEqualSlices(u64, ref.items, got);
 }
 
-test "compact reports a cleanup" {
+test "compact rebuilds rather than running a cleanup pass" {
     var bm = try Bitmap.init(testing.allocator);
     defer bm.deinit();
     for (0..1000) |i| _ = try bm.set(i * 3);
-    const before = bm.counters.cleanups;
+    // A key whose container compact has to drop, so the two have the same
+    // reclaiming to do and only the way they do it differs.
+    _ = try bm.set(1 << 40);
+    _ = bm.remove(1 << 40);
+
+    const before = bm.counters;
     try bm.compact();
-    try testing.expectEqual(before + 1, bm.counters.cleanups);
+    try testing.expectEqual(@as(usize, 1), bm.keys().numKeys());
+    // The rewrite drops the key by not copying it, so nothing moved in place.
+    try testing.expectEqual(before.cleanups, bm.counters.cleanups);
+    try testing.expectEqual(
+        before.cleanup_moved_u16,
+        bm.counters.cleanup_moved_u16,
+    );
+    try testing.expectEqual(
+        before.cleanup_key_visits,
+        bm.counters.cleanup_key_visits,
+    );
 }

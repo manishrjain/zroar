@@ -160,11 +160,12 @@ pub const Bitmap = struct {
 
     /// Copies a borrowed buffer into one this bitmap owns, so that mutations
     /// never write to the caller's buffer. On an owned bitmap this is one
-    /// branch. The fallible mutating entry points (`set`, `orInPlace`,
-    /// `compact`) call it themselves; the infallible ones (`remove`,
-    /// `cleanup`, `andInPlace`, `andNotInPlace`) have no error to report the
-    /// copy's allocation failure through, so they assert it has already
-    /// happened — call this first to mutate a borrowed bitmap with them.
+    /// branch. The fallible mutating entry points (`set`, `orInPlace`) call it
+    /// themselves; the infallible ones (`remove`, `cleanup`, `andInPlace`,
+    /// `andNotInPlace`) have no error to report the copy's allocation failure
+    /// through, so they assert it has already happened — call this first to
+    /// mutate a borrowed bitmap with them. `compact` needs neither: it rewrites
+    /// into a buffer it allocates itself, which owns the result outright.
     pub fn ensureOwned(self: *Bitmap) !void {
         if (self.owned) return;
         const out =
@@ -1345,7 +1346,9 @@ pub const Bitmap = struct {
     ///
     /// Three kinds of slack go away:
     ///
-    ///   - dead space left behind by container relocation, via `cleanup`
+    ///   - dead space: the slots container relocation abandoned, and the
+    ///     containers andInPlace, andNotInPlace or remove left empty, together
+    ///     with their keys. Key 0 always survives.
     ///   - the gap between a container's cardinality and its ladder step, since
     ///     `container.array_sizes` rounds up so containers have room to grow
     ///   - bitmap containers holding few enough values to fit an array, which
@@ -1358,24 +1361,55 @@ pub const Bitmap = struct {
     /// compacting is the point — `toBuffer` then hands back the smallest
     /// buffer that round-trips.
     ///
+    /// The size that buffer needs is a sum over the keys, so it can be had
+    /// before anything is touched — and it is never more than the bitmap
+    /// already occupies. Equal to the capacity means every u16 allocated is
+    /// already doing useful work, and all that is left to do is zero the dead
+    /// bytes among them. Otherwise the rewrite goes into a buffer of exactly
+    /// that size and the old one is dropped whole, which is why neither
+    /// `ensureOwned` nor a `cleanup` pass runs first: both would move bytes
+    /// that the rewrite immediately overwrites, or that the free discards.
+    ///
     /// O(total values): every container is rewritten, and a bitmap container
-    /// that converts is walked bit by bit.
+    /// that converts is walked bit by bit. O(keys) when there is nothing to
+    /// reclaim.
     pub fn compact(self: *Bitmap) !void {
-        try self.ensureOwned();
-        // Empty containers and dead slots first; no point measuring them.
-        self.cleanup();
-
         const ks = self.keys();
-        const num_keys = ks.numKeys();
+        const old_num_keys = ks.numKeys();
+
+        // What the result needs: the keys worth keeping, each container at the
+        // smallest size that holds it. Empty containers are dropped with their
+        // keys, so they cost nothing here — except key 0's, which stays
+        // whatever its cardinality, a key without a container being
+        // unrepresentable. Dead slots belong to no key, so the walk never sees
+        // them.
+        var num_keys: usize = 0;
+        var payload: usize = 0;
+        for (0..old_num_keys) |i| {
+            const card =
+                container.getCardinality(self.getContainer(ks.val(i)));
+            if (i > 0 and card == 0) continue;
+            num_keys += 1;
+            payload += compactSizeFor(card);
+        }
 
         // One spare key slot, mirroring the arrays' free slot: `Keys.set`
         // requires the node not be full when it is called.
         const node_size = 4 * (2 * (num_keys + 1) + 2);
+        const total = node_size + payload;
 
-        var total: usize = node_size;
-        for (0..num_keys) |i| {
-            const c = self.getContainer(ks.val(i));
-            total += compactSizeFor(container.getCardinality(c));
+        // Every container sits at or above its compacted size and the node at
+        // or above its minimum, so `total` is bounded by what is already there.
+        // A capacity down at that bound leaves nothing to reclaim: the rewrite
+        // would lay the same containers out at the same offsets, and all that
+        // would come of it is a zeroed slack. Zero that in place instead. A
+        // borrowed buffer is rewritten regardless of size: compact hands back a
+        // mutable bitmap, and the rewrite is the copy that makes it one — the
+        // same copy `ensureOwned` would have made, minus the second allocation.
+        assert(total <= self.data.len);
+        if (self.owned and self.cap == total) {
+            self.zeroSlack();
+            return;
         }
 
         const out = try self.allocator.alignedAlloc(u16, .@"8", total);
@@ -1387,10 +1421,12 @@ pub const Bitmap = struct {
         new_ks.setNodeSize(node_size);
         new_ks.setNumKeys(num_keys);
 
+        var w: usize = 0;
         var off: usize = node_size;
-        for (0..num_keys) |i| {
+        for (0..old_num_keys) |i| {
             const src = self.getContainer(ks.val(i));
             const card = container.getCardinality(src);
+            if (i > 0 and card == 0) continue;
             const sz = compactSizeFor(card);
             const dst = out[off..][0..sz];
 
@@ -1412,10 +1448,12 @@ pub const Bitmap = struct {
             }
             dst[container.index_size] = sz;
 
-            new_ks.setKeyAt(i, ks.key(i));
-            new_ks.setValAt(i, off);
+            new_ks.setKeyAt(w, ks.key(i));
+            new_ks.setValAt(w, off);
+            w += 1;
             off += sz;
         }
+        assert(w == num_keys);
         assert(off == total);
 
         if (self.owned) self.allocator.free(self.data.ptr[0..self.cap]);
@@ -1423,6 +1461,28 @@ pub const Bitmap = struct {
         self.cap = total;
         self.owned = true;
         self.dead = 0;
+    }
+
+    /// Zeroes the dead bytes of a buffer already sized the way `compact`
+    /// sizes it, which is all that separates it from the buffer a rewrite
+    /// would have produced. Those are the spare key pair at the end of the
+    /// node, and per array container the free slot its invariant demands plus
+    /// up to three u16 of alignment: `array.remove` clears the slot it
+    /// vacates, but the in-place set operations shrink a container by its
+    /// cardinality alone and leave its tail lying there. A bitmap container
+    /// has no dead bytes at all — its payload is its data.
+    ///
+    /// O(keys), and a few u16s per key at that: a container this size has no
+    /// room to hold more.
+    fn zeroSlack(self: *Bitmap) void {
+        const ks = self.keys();
+        const used = node_header_size + key_pair_size * ks.numKeys();
+        zero(self.data[used..ks.size()]);
+        for (0..ks.numKeys()) |i| {
+            const c = self.getContainer(ks.val(i));
+            if (container.getType(c) == .bitmap) continue;
+            zero(c[container.start_idx + container.getCardinality(c) ..]);
+        }
     }
 
     /// Drops the keys of empty containers, shrinking the node by exactly the

@@ -654,8 +654,15 @@ test "compact shrinks the buffer, preserves content, and stays mutable" {
     defer testing.allocator.free(got);
     try testing.expectEqualSlices(u64, ref.items, got);
 
-    // Compacting again is a no-op: it is already as small as it goes.
+    // Compacting again is a no-op, and knows it before allocating: the size
+    // it would rebuild into is the size it already has.
+    var failing = std.testing.FailingAllocator.init(
+        testing.allocator,
+        .{ .fail_index = 0 },
+    );
+    bm.allocator = failing.allocator();
     try bm.compact();
+    bm.allocator = testing.allocator;
     try testing.expectEqual(after, bm.toBuffer().len);
 
     // And it is still an ordinary bitmap: writing into it works, including
@@ -695,6 +702,30 @@ test "compact round trips through a buffer" {
     defer testing.allocator.free(b);
     try testing.expectEqualSlices(u64, a, b);
     try checkInvariants(&reopened);
+}
+
+test "compact owns a borrowed buffer it cannot shrink" {
+    var src = try testBitmap(&.{ 1, 99, 1 << 40 });
+    defer src.deinit();
+    try src.compact();
+    const buf = try src.toBufferCopy(testing.allocator);
+    defer testing.allocator.free(buf);
+    const orig = try testing.allocator.dupe(u8, buf);
+    defer testing.allocator.free(orig);
+
+    // Already canonical, so there is nothing to reclaim — but compacting must
+    // still hand back a bitmap the infallible mutations may write to, and get
+    // there without writing to the caller's buffer.
+    var bm = try Bitmap.fromBuffer(testing.allocator, buf, .borrow);
+    defer bm.deinit();
+    try bm.compact();
+    try testing.expect(bm.owned);
+    try testing.expectEqual(buf.len, bm.toBuffer().len);
+
+    try testing.expect(bm.remove(99)); // infallible: asserts ownership
+    try testing.expect(!bm.contains(99));
+    try testing.expectEqualSlices(u8, orig, buf);
+    try checkInvariants(&bm);
 }
 
 test "compact on an empty bitmap keeps key 0 and stays usable" {
@@ -2040,6 +2071,63 @@ test "compact canonicalizes: equal sets give byte-identical buffers" {
     try direct.compact();
     try testing.expectEqualSlices(u16, direct.data, scenic.data);
     try checkInvariants(&scenic);
+}
+
+/// How a container is made to give a value back. Each shrinks it in place, so
+/// the size stays put and only the cardinality moves.
+const ShrinkBy = enum { remove, and_not, and_with };
+
+/// {i * 7 | i < n} minus 7, built the long way round: the whole run first,
+/// compacted, and then the one value dropped by `how`.
+fn shrunkRun(n: usize, how: ShrinkBy) !Bitmap {
+    var bm = try Bitmap.init(testing.allocator);
+    errdefer bm.deinit();
+    for (0..n) |i| _ = try bm.set(i * 7);
+    try bm.compact();
+
+    switch (how) {
+        .remove => try testing.expect(bm.remove(7)),
+        .and_not => {
+            var other = try testBitmap(&.{7});
+            defer other.deinit();
+            bm.andNotInPlace(&other);
+        },
+        .and_with => {
+            var keep = try Bitmap.init(testing.allocator);
+            defer keep.deinit();
+            for (0..n) |i| {
+                if (i != 1) _ = try keep.set(i * 7);
+            }
+            bm.andInPlace(&keep);
+        },
+    }
+    return bm;
+}
+
+test "compact canonicalizes a buffer it has no need to resize" {
+    // A compacted array container holds four cardinalities before its size has
+    // to change, so a value dropped in place usually leaves the buffer the
+    // size compaction would pick anyway — with the dropped value still lying
+    // in the slack, where `compact` used to rewrite it away. Walk enough
+    // cardinalities to cover every residue, and every way of dropping one.
+    for (30..46) |n| {
+        var vals: std.ArrayListUnmanaged(u64) = .empty;
+        defer vals.deinit(testing.allocator);
+        for (0..n) |i| {
+            if (i != 1) try vals.append(testing.allocator, i * 7);
+        }
+        var direct = try Bitmap.fromSortedList(testing.allocator, vals.items);
+        defer direct.deinit();
+        try direct.compact();
+
+        for ([_]ShrinkBy{ .remove, .and_not, .and_with }) |how| {
+            var shrunk = try shrunkRun(n, how);
+            defer shrunk.deinit();
+            try shrunk.compact();
+            try testing.expectEqualSlices(u16, direct.data, shrunk.data);
+            try checkInvariants(&shrunk);
+        }
+    }
 }
 
 test "the format version is the buffer's first two bytes and is enforced" {
