@@ -3,7 +3,7 @@
 
 const std = @import("std");
 
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
@@ -30,7 +30,7 @@ pub fn build(b: *std.Build) void {
 
     // b.option panics if an option is declared twice, so anything shared by
     // the bench and difftest wiring is resolved exactly once, here.
-    const croaring = Croaring.resolve(b, target);
+    const croaring = try Croaring.resolve(b, target);
     addBench(b, target, optimize, croaring);
     addDifftest(b, target, optimize, croaring);
 }
@@ -62,7 +62,7 @@ const Croaring = union(enum) {
         c_flags: []const []const u8,
     };
 
-    fn resolve(b: *std.Build, target: std.Build.ResolvedTarget) Croaring {
+    fn resolve(b: *std.Build, target: std.Build.ResolvedTarget) !Croaring {
         const opt = b.option(
             []const u8,
             "croaring",
@@ -71,7 +71,7 @@ const Croaring = union(enum) {
         const root = if (std.fs.path.isAbsolute(opt))
             opt
         else
-            b.pathResolve(&.{ b.build_root.path orelse ".", opt });
+            try b.root.joinString(b.allocator, opt);
 
         // Declared whether or not the checkout is there, so the option set
         // does not depend on the state of /tmp.
@@ -178,7 +178,7 @@ fn addSearchBench(
     // Timings from an unoptimized build would only mislead, so default to
     // ReleaseFast whatever the build's own mode is.
     const bench_optimize: std.builtin.OptimizeMode =
-        if (optimize == .Debug) .ReleaseFast else optimize;
+        if (optimize == .debug) .fast else optimize;
 
     const exe = b.addExecutable(.{
         .name = "search_bench",
@@ -208,7 +208,7 @@ fn addDifftest(
     // Debug is ~18s (keys-node insertion under scattered streams); ReleaseSafe
     // keeps every safety check and runs in ~2s, so it's the default.
     const diff_optimize: std.builtin.OptimizeMode =
-        if (optimize == .Debug) .ReleaseSafe else optimize;
+        if (optimize == .debug) .safe else optimize;
 
     const step = b.step(
         "difftest",
@@ -240,7 +240,7 @@ fn addDifftest(
     Croaring.attach(found, b, exe.root_module, target, diff_optimize);
     const run = b.addRunArtifact(exe);
     // `zig build difftest -- --soak 600` and friends reach the binary.
-    if (b.args) |args| run.addArgs(args);
+    run.addPassthruArgs();
     step.dependOn(&run.step);
 }
 
@@ -255,7 +255,7 @@ fn addBench(
     // Benchmark numbers taken in Debug measure the safety checks, not the code,
     // so the bench defaults to ReleaseFast. An explicit -Doptimize still wins.
     const bench_optimize: std.builtin.OptimizeMode =
-        if (optimize == .Debug) .ReleaseFast else optimize;
+        if (optimize == .debug) .fast else optimize;
 
     const step = b.step(
         "bench",
@@ -296,7 +296,7 @@ fn addBench(
     Croaring.attach(found, b, exe.root_module, target, bench_optimize);
 
     const run = b.addRunArtifact(exe);
-    if (b.args) |args| run.addArgs(args);
+    run.addPassthruArgs();
     step.dependOn(&run.step);
     exe_step.dependOn(&b.addInstallArtifact(exe, .{}).step);
 }
@@ -326,11 +326,11 @@ fn croaringFlags(
         const cpu_features = resolved_target.result.cpu.features;
         const Feature = std.Target.x86.Feature;
         const has_avx512f =
-            cpu_features.isEnabled(@intFromEnum(Feature.avx512f));
+            cpu_features.isEnabled(@backingInt(Feature.avx512f));
         const has_avx512dq =
-            cpu_features.isEnabled(@intFromEnum(Feature.avx512dq));
+            cpu_features.isEnabled(@backingInt(Feature.avx512dq));
         const has_avx512bw =
-            cpu_features.isEnabled(@intFromEnum(Feature.avx512bw));
+            cpu_features.isEnabled(@backingInt(Feature.avx512bw));
 
         // CRoaring requires multiple AVX512 features, not just AVX512F
         const has_required_avx512 =
